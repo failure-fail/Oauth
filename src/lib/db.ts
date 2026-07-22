@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import type { ProviderId } from "./config";
+import { PROVIDERS, type ProviderId } from "./config";
 
 export type User = {
   id: string;
@@ -89,6 +89,9 @@ const emptyDb = (): Database => ({
 });
 
 const STORE_KEY = "failure-oauth:store";
+const KNOWN_PROVIDERS = new Set<string>(PROVIDERS.map((p) => p.id));
+/** Providers we used to support but no longer expose. */
+const REMOVED_PROVIDERS = new Set(["cursor", "chatgpt"]);
 
 type KvLike = {
   get: (key: string) => Promise<string | null>;
@@ -96,6 +99,28 @@ type KvLike = {
 };
 
 let memoryFallback: Database | null = null;
+
+function isKnownProvider(value: unknown): value is ProviderId {
+  return typeof value === "string" && KNOWN_PROVIDERS.has(value);
+}
+
+/** Drop legacy/unknown provider rows (e.g. old Cursor connections). */
+function sanitizeDb(store: Database): { store: Database; changed: boolean } {
+  const beforeConn = store.connections.length;
+  const beforeFlows = store.pendingFlows.length;
+  store.connections = store.connections.filter((c) =>
+    isKnownProvider(c.provider),
+  );
+  store.pendingFlows = store.pendingFlows.filter((f) =>
+    isKnownProvider(f.provider),
+  );
+  return {
+    store,
+    changed:
+      store.connections.length !== beforeConn ||
+      store.pendingFlows.length !== beforeFlows,
+  };
+}
 
 async function getKv(): Promise<KvLike | null> {
   try {
@@ -117,11 +142,21 @@ async function readDb(): Promise<Database> {
       await kv.put(STORE_KEY, JSON.stringify(fresh));
       return fresh;
     }
-    return JSON.parse(raw) as Database;
+    const parsed = JSON.parse(raw) as Database;
+    const { store, changed } = sanitizeDb(parsed);
+    if (changed) {
+      await kv.put(STORE_KEY, JSON.stringify(store));
+    }
+    return store;
   }
 
   // Local/dev fallback: in-memory (optionally hydrated from disk)
-  if (memoryFallback) return memoryFallback;
+  if (memoryFallback) {
+    const { store, changed } = sanitizeDb(memoryFallback);
+    memoryFallback = store;
+    if (changed) await writeDb(store);
+    return store;
+  }
   try {
     const { existsSync, mkdirSync, readFileSync } = await import("fs");
     const path = await import("path");
@@ -129,8 +164,11 @@ async function readDb(): Promise<Database> {
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
     const file = path.join(dir, "store.json");
     if (existsSync(file)) {
-      memoryFallback = JSON.parse(readFileSync(file, "utf8")) as Database;
-      return memoryFallback;
+      const parsed = JSON.parse(readFileSync(file, "utf8")) as Database;
+      const { store, changed } = sanitizeDb(parsed);
+      memoryFallback = store;
+      if (changed) await writeDb(store);
+      return store;
     }
   } catch {
     // ignore fs in restricted runtimes
@@ -292,7 +330,22 @@ export const db = {
 
   async listConnections(userId: string) {
     const store = await readDb();
-    return store.connections.filter((c) => c.userId === userId);
+    return store.connections.filter(
+      (c) => c.userId === userId && isKnownProvider(c.provider),
+    );
+  },
+
+  /** One-shot / admin: purge removed providers (cursor, chatgpt, …) for all users. */
+  async purgeRemovedProviders() {
+    return mutate((store) => {
+      const before = store.connections.length;
+      const { changed } = sanitizeDb(store);
+      return {
+        changed,
+        removed: before - store.connections.length,
+        remaining: store.connections.length,
+      };
+    });
   },
 
   async getConnection(userId: string, provider: ProviderId) {
