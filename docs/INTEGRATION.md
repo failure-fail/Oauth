@@ -514,9 +514,11 @@ Prefer headers/endpoints from the credential package over hardcoding versions.
 
 Same device OAuth as [MoonshotAI/kimi-cli](https://github.com/MoonshotAI/kimi-cli). OpenAI-compatible coding API at `https://api.kimi.com/coding/v1`.
 
+> **Cloudflare Workers cannot call `api.kimi.com/coding` directly** (CF bot challenge HTML). OAuth against `auth.kimi.com` still works. For Worker-hosted chat/models, run `pnpm relay:kimi` and set `FAILURE_KIMI_BASE_URL`. Credential `endpoints.base` is the relay URL when configured.
+
 ```js
 const cred = providers.find((p) => p.provider === "kimi").credentials;
-const base = cred.endpoints.base; // https://api.kimi.com/coding/v1
+const base = cred.endpoints.base; // relay or https://api.kimi.com/coding/v1
 
 await fetch(`${base}/chat/completions`, {
   method: "POST",
