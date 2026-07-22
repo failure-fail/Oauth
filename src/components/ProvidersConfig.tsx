@@ -98,7 +98,6 @@ export function ProvidersConfig({
   const [claudeToken, setClaudeToken] = useState("");
   const [claudeAck, setClaudeAck] = useState(false);
   const [grokFlow, setGrokFlow] = useState<GrokFlow | null>(null);
-  const [cursorKey, setCursorKey] = useState("");
 
   const byProvider = useMemo(() => {
     const map = new Map<string, Connection>();
@@ -491,45 +490,6 @@ export function ProvidersConfig({
                       <p className="muted">Waiting for approval…</p>
                     </>
                   )}
-                </div>
-              )}
-
-              {open && provider.id === "cursor" && (
-                <div className="provider-form">
-                  <p>
-                    Create a user API key at{" "}
-                    <a
-                      className="text-link"
-                      href="https://cursor.com/dashboard/integrations"
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      cursor.com/dashboard/integrations
-                    </a>
-                    .
-                  </p>
-                  <input
-                    value={cursorKey}
-                    onChange={(e) => setCursorKey(e.target.value)}
-                    placeholder="Cursor account API key"
-                  />
-                  <button
-                    type="button"
-                    className="btn-primary"
-                    disabled={busy || !cursorKey}
-                    onClick={async () => {
-                      await call({
-                        action: "cursor_connect",
-                        accountKey: cursorKey,
-                      });
-                      setCursorKey("");
-                      setActive(null);
-                      setMessage("Cursor connected.");
-                      await refresh();
-                    }}
-                  >
-                    Save Cursor key
-                  </button>
                 </div>
               )}
             </section>

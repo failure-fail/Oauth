@@ -20,7 +20,7 @@ const figtree = Figtree({
 export const metadata: Metadata = {
   title: "Failure AI OAuth",
   description:
-    "Universal PKCE OAuth for apps — connect Codex, ChatGPT, Claude Code, Grok Build, and Cursor.",
+    "Universal PKCE OAuth for apps — connect Codex, ChatGPT, Claude Code, and Grok Build.",
 };
 
 export default async function RootLayout({

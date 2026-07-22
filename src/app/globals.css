@@ -975,11 +975,16 @@ textarea {
 }
 
 .chat-toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 1rem;
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) minmax(220px, 1.4fr) auto;
+  gap: 0.85rem;
   align-items: end;
-  justify-content: space-between;
+}
+
+@media (max-width: 820px) {
+  .chat-toolbar {
+    grid-template-columns: 1fr;
+  }
 }
 
 .chat-toolbar label {

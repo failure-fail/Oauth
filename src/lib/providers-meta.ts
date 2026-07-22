@@ -56,20 +56,6 @@ export const PROVIDERS = [
     accentSoft: "rgba(232, 232, 232, 0.12)",
     risk: null as string | null,
   },
-  {
-    id: "cursor",
-    name: "Cursor",
-    short: "Account key",
-    buttonLabel: "Connect Cursor",
-    connectedLabel: "Connected to Cursor",
-    description:
-      "Add your Cursor user API key from Dashboard → Integrations / API Keys.",
-    method: "account_key",
-    docsUrl: "https://cursor.com/dashboard/integrations",
-    accent: "#f54e00",
-    accentSoft: "rgba(245, 78, 0, 0.18)",
-    risk: null as string | null,
-  },
 ] as const;
 
 export type ProviderId = (typeof PROVIDERS)[number]["id"];

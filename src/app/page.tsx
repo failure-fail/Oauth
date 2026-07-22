@@ -9,7 +9,7 @@ export default function HomePage() {
         <h2>Universal AI OAuth for any app</h2>
         <p>
           PKCE sign-in that lets users bring Codex, ChatGPT, Claude Code, Grok
-          Build, and Cursor — then hand your app one clean Failure session.
+          Build — then hand your app one clean Failure session.
         </p>
         <div className="hero-cta">
           <SignInWithFailure href="/signup" />
@@ -55,10 +55,6 @@ export default function HomePage() {
           <article>
             <h3>Grok Build OAuth</h3>
             <p>xAI device-code OAuth for Grok Build / SuperGrok sessions.</p>
-          </article>
-          <article>
-            <h3>Cursor account key</h3>
-            <p>Paste a Cursor user API key from the Integrations dashboard.</p>
           </article>
         </div>
       </section>

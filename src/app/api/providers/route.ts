@@ -7,7 +7,6 @@ import {
   completeCodexDesktopOAuth,
   connectChatGptTokens,
   connectClaudeSetupToken,
-  connectCursorAccountKey,
   connectionPublicView,
   pollGrokDeviceOAuth,
   startCodexDesktopOAuth,
@@ -57,12 +56,8 @@ const actionSchema = z.discriminatedUnion("action", [
     flowId: z.string(),
   }),
   z.object({
-    action: z.literal("cursor_connect"),
-    accountKey: z.string().min(1),
-  }),
-  z.object({
     action: z.literal("disconnect"),
-    provider: z.enum(["codex", "chatgpt", "claude", "grok", "cursor"]),
+    provider: z.enum(["codex", "chatgpt", "claude", "grok"]),
   }),
 ]);
 
@@ -104,10 +99,6 @@ export async function POST(req: Request) {
           flowId: body.flowId,
         });
         return NextResponse.json(result);
-      }
-      case "cursor_connect": {
-        const conn = await connectCursorAccountKey(user.id, body.accountKey);
-        return NextResponse.json({ connection: connectionPublicView(conn) });
       }
       case "disconnect": {
         await db.deleteConnection(user.id, body.provider as ProviderId);

@@ -15,7 +15,7 @@ export default async function SignupPage() {
         <h1>Create your account</h1>
         <p className="muted">
           Email + password first. Then connect Codex, ChatGPT, Claude Code, Grok
-          Build, and Cursor.
+          Build.
         </p>
         <Suspense fallback={<p className="muted">Loading…</p>}>
           <AuthForm mode="signup" />

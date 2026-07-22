@@ -332,26 +332,6 @@ export async function pollGrokDeviceOAuth(input: {
   return { status: "connected" as const, connection: conn };
 }
 
-export async function connectCursorAccountKey(userId: string, accountKey: string) {
-  const key = accountKey.trim();
-  if (!key) throw new Error("Cursor account key required");
-  return await db.upsertConnection({
-    userId,
-    provider: "cursor",
-    status: "connected",
-    label: "Cursor account key",
-    encryptedPayload: storeProviderSecret({
-      type: "cursor_account_key",
-      accountKey: key,
-      accessToken: key,
-    }),
-    meta: {
-      method: "account_key",
-      dashboard: "https://cursor.com/dashboard/integrations",
-    },
-  });
-}
-
 export function connectionPublicView(conn: ProviderConnection) {
   return {
     id: conn.id,

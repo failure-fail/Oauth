@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { PROVIDERS, type ProviderId } from "@/lib/providers-meta";
 
 type Connection = {
@@ -8,6 +8,8 @@ type Connection = {
   status: string;
   label?: string;
 };
+
+type ProviderModel = { id: string; name?: string };
 
 type Message = {
   id: string;
@@ -35,6 +37,9 @@ export function ChatPanel({
   const [provider, setProvider] = useState<ProviderId | "">(
     connected[0]?.id || "",
   );
+  const [models, setModels] = useState<ProviderModel[]>([]);
+  const [model, setModel] = useState("");
+  const [modelsFor, setModelsFor] = useState<ProviderId | "">("");
   const [prompt, setPrompt] = useState("Say hello in one short sentence.");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -43,14 +48,78 @@ export function ChatPanel({
       id: "welcome",
       role: "system",
       text: connected.length
-        ? "Pick a connected provider and send a test prompt."
+        ? "Pick a connected provider. Models are fetched live from that provider."
         : "No providers connected yet. Link one under Providers, then come back.",
     },
   ]);
 
+  const loadingModels = Boolean(provider) && modelsFor !== provider;
+
+  useEffect(() => {
+    if (!provider) return;
+    let cancelled = false;
+    const providerId = provider;
+
+    fetch(`/api/chat/models?provider=${encodeURIComponent(providerId)}`)
+      .then(async (res) => {
+        const data = await res.json();
+        if (cancelled) return;
+        if (!res.ok) throw new Error(data.error || "Failed to fetch models");
+        const next = (data.models || []) as ProviderModel[];
+        setModels(next);
+        setModel(next[0]?.id || "");
+        setModelsFor(providerId);
+        setError(null);
+        setMessages((m) => [
+          ...m,
+          {
+            id: `models-${Date.now()}`,
+            role: "system",
+            text: next.length
+              ? `Fetched ${next.length} live models from ${providerId}.`
+              : `No models returned by ${providerId}.`,
+            provider: providerId,
+          },
+        ]);
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setModels([]);
+        setModel("");
+        setModelsFor(providerId);
+        setError(err instanceof Error ? err.message : "Failed to fetch models");
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [provider]);
+
+  async function refreshModels() {
+    if (!provider) return;
+    setModelsFor("");
+    setError(null);
+    try {
+      const res = await fetch(
+        `/api/chat/models?provider=${encodeURIComponent(provider)}`,
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to fetch models");
+      const next = (data.models || []) as ProviderModel[];
+      setModels(next);
+      setModel((current) =>
+        next.some((m) => m.id === current) ? current : next[0]?.id || "",
+      );
+      setModelsFor(provider);
+    } catch (err) {
+      setModelsFor(provider);
+      setError(err instanceof Error ? err.message : "Failed to fetch models");
+    }
+  }
+
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
-    if (!provider || !prompt.trim() || busy) return;
+    if (!provider || !prompt.trim() || !model || busy) return;
     setBusy(true);
     setError(null);
     const userMsg: Message = {
@@ -58,16 +127,25 @@ export function ChatPanel({
       role: "user",
       text: prompt.trim(),
       provider,
+      model,
     };
     setMessages((m) => [...m, userMsg]);
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ provider, prompt: prompt.trim() }),
+        body: JSON.stringify({
+          provider,
+          prompt: prompt.trim(),
+          model,
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Chat failed");
+      if (Array.isArray(data.models) && data.models.length) {
+        setModels(data.models);
+        setModelsFor(provider);
+      }
       setMessages((m) => [
         ...m,
         {
@@ -102,10 +180,17 @@ export function ChatPanel({
           <span>Provider</span>
           <select
             value={provider}
-            onChange={(e) => setProvider(e.target.value as ProviderId)}
+            onChange={(e) => {
+              setProvider(e.target.value as ProviderId);
+              setModelsFor("");
+              setModels([]);
+              setModel("");
+            }}
             disabled={!connected.length}
           >
-            {!connected.length && <option value="">No providers connected</option>}
+            {!connected.length && (
+              <option value="">No providers connected</option>
+            )}
             {connected.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.name}
@@ -113,11 +198,33 @@ export function ChatPanel({
             ))}
           </select>
         </label>
-        <p className="muted">
-          {connected.length
-            ? `${connected.length} connected — replies use your linked credentials.`
-            : "Connect Codex, ChatGPT, Claude, Grok, or Cursor first."}
-        </p>
+        <label>
+          <span>Model {loadingModels ? "(fetching live…)" : "(live)"}</span>
+          <select
+            value={model}
+            onChange={(e) => setModel(e.target.value)}
+            disabled={!models.length || loadingModels}
+          >
+            {!models.length && (
+              <option value="">
+                {loadingModels ? "Loading models…" : "No models"}
+              </option>
+            )}
+            {models.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.name && m.name !== m.id ? `${m.name} (${m.id})` : m.id}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button
+          type="button"
+          className="btn-secondary"
+          onClick={refreshModels}
+          disabled={!provider || loadingModels}
+        >
+          Refresh models
+        </button>
       </div>
 
       <div className="chat-log" aria-live="polite">
@@ -150,7 +257,14 @@ export function ChatPanel({
         <button
           className="btn-primary"
           type="submit"
-          disabled={!connected.length || busy || !provider || !prompt.trim()}
+          disabled={
+            !connected.length ||
+            busy ||
+            loadingModels ||
+            !provider ||
+            !model ||
+            !prompt.trim()
+          }
         >
           {busy ? "Sending…" : "Send test"}
         </button>

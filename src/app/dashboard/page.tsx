@@ -42,7 +42,7 @@ export default async function DashboardPage() {
           <h2>Providers</h2>
           <p className="muted">
             {connections.length}/{PROVIDERS.length} connected. Configure Codex,
-            ChatGPT, Claude Code, Grok Build, and Cursor from your account
+            ChatGPT, Claude Code, and Grok Build from your account
             providers page — then try them in Chat.
           </p>
         </div>

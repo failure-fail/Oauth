@@ -10,7 +10,6 @@ Universal **PKCE OAuth** that any app can integrate. Users sign up with email an
 | **ChatGPT** | Tokens from [openai-oauth](https://github.com/EvanZhouDev/openai-oauth) |
 | **Claude Code** | `claude setup-token` — **risk of account deletion** (Anthropic ToS) |
 | **Grok Build** | Grok Build / xAI device-code OAuth |
-| **Cursor** | Account API key from Dashboard → Integrations |
 
 ## Quick start
 
@@ -80,7 +79,7 @@ curl -X POST https://YOUR_HOST/api/oauth/token \
   -d 'code_verifier=PKCE_VERIFIER'
 ```
 
-UserInfo (with `providers` scope) returns linked Codex / ChatGPT / Claude / Grok / Cursor credentials for the signed-in user.
+UserInfo (with `providers` scope) returns linked Codex / ChatGPT / Claude / Grok credentials for the signed-in user.
 
 ## Universal UI format
 
@@ -91,4 +90,4 @@ UserInfo (with `providers` scope) returns linked Codex / ChatGPT / Claude / Grok
 - Provider secrets are encrypted at rest (AES-256-GCM).
 - Claude Code connection requires explicit risk acknowledgement.
 - Prefer public PKCE clients; confidential clients are supported via hashed client secrets.
-- This project is not affiliated with OpenAI, Anthropic, xAI, or Cursor.
+- This project is not affiliated with OpenAI, Anthropic, xAI,.
