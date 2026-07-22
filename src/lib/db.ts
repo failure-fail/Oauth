@@ -64,6 +64,7 @@ export type PendingProviderFlow = {
   userId: string;
   provider: ProviderId;
   encryptedState: string;
+  bridgeToken?: string;
   expiresAt: number;
 };
 
@@ -366,6 +367,17 @@ export const db = {
     );
     if (!flow || flow.expiresAt < Date.now()) return null;
     return flow;
+  },
+
+  async getPendingFlowByBridgeToken(flowId: string, bridgeToken: string) {
+    const store = await readDb();
+    const flow = store.pendingFlows.find(
+      (f) =>
+        f.id === flowId &&
+        f.bridgeToken === bridgeToken &&
+        f.expiresAt > Date.now(),
+    );
+    return flow ?? null;
   },
 
   async deletePendingFlow(id: string) {

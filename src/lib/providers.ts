@@ -26,6 +26,7 @@ export async function startCodexDesktopOAuth(userId: string) {
   const verifier = randomToken(48);
   const challenge = pkceChallengeFromVerifier(verifier);
   const state = randomToken(24);
+  const bridgeToken = randomToken(24);
   const params = new URLSearchParams({
     response_type: "code",
     client_id: CODEX_OAUTH.clientId,
@@ -36,6 +37,7 @@ export async function startCodexDesktopOAuth(userId: string) {
     state,
     id_token_add_organizations: "true",
     codex_cli_simplified_flow: "true",
+    originator: CODEX_OAUTH.originator,
   });
   const authorizeUrl = `${CODEX_OAUTH.authorizeUrl}?${params.toString()}`;
   const flowId = randomUUID();
@@ -43,31 +45,49 @@ export async function startCodexDesktopOAuth(userId: string) {
     id: flowId,
     userId,
     provider: "codex",
+    bridgeToken,
     encryptedState: encryptSecret(
       JSON.stringify({ verifier, state, authorizeUrl }),
     ),
     expiresAt: Date.now() + 1000 * 60 * 15,
   });
+  const apiBase = (
+    process.env.FAILURE_OAUTH_BASE_URL || "http://localhost:3000"
+  ).replace(/\/$/, "");
+  const bridgeCommand = [
+    `curl -fsSL "${apiBase}/sdk/codex-desktop-login.mjs" -o /tmp/failure-codex-desktop.mjs`,
+    `node /tmp/failure-codex-desktop.mjs --flow-id=${flowId} --bridge-token=${bridgeToken} --api-base=${apiBase} --authorize-url=${JSON.stringify(authorizeUrl)}`,
+  ].join(" && ");
   return {
     flowId,
+    bridgeToken,
     authorizeUrl,
     redirectUri: CODEX_OAUTH.redirectUri,
+    port: CODEX_OAUTH.port,
+    method: "desktop_oauth" as const,
+    bridgeCommand,
     instructions: [
-      "Open the Codex authorize URL on this machine (desktop OAuth).",
-      "Complete sign-in in the browser.",
-      "After redirect to localhost:1455, paste the full callback URL or the code below.",
+      "Codex uses official desktop OAuth (same as Codex CLI/Desktop): PKCE + http://localhost:1455/auth/callback.",
+      "Run the desktop bridge command in a terminal on this machine (Node 20+).",
+      "The bridge opens your browser, listens on port 1455, and finishes the connection automatically.",
+      "Fallback: paste the full localhost:1455 callback URL below if the bridge cannot bind the port.",
     ],
   };
 }
 
 export async function completeCodexDesktopOAuth(input: {
-  userId: string;
+  userId?: string;
   flowId: string;
   callbackUrlOrCode: string;
+  bridgeToken?: string;
 }) {
-  const flow = await db.getPendingFlow(input.flowId, input.userId);
+  const flow = input.bridgeToken
+    ? await db.getPendingFlowByBridgeToken(input.flowId, input.bridgeToken)
+    : input.userId
+      ? await db.getPendingFlow(input.flowId, input.userId)
+      : null;
   if (!flow || flow.provider !== "codex") {
-    throw new Error("Codex flow not found or expired");
+    throw new Error("Codex desktop OAuth flow not found or expired");
   }
   const statePayload = JSON.parse(decryptSecret(flow.encryptedState)) as {
     verifier: string;
@@ -103,7 +123,10 @@ export async function completeCodexDesktopOAuth(input: {
   });
   const res = await fetch(CODEX_OAUTH.tokenUrl, {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      Accept: "application/json",
+    },
     body,
   });
   if (!res.ok) {
@@ -114,14 +137,15 @@ export async function completeCodexDesktopOAuth(input: {
     access_token: string;
     refresh_token?: string;
     expires_in?: number;
+    id_token?: string;
   };
   const conn = await db.upsertConnection({
-    userId: input.userId,
+    userId: flow.userId,
     provider: "codex",
     status: "connected",
     label: "Codex desktop OAuth",
     encryptedPayload: storeProviderSecret({
-      type: "codex_oauth",
+      type: "codex_desktop_oauth",
       accessToken: json.access_token,
       refreshToken: json.refresh_token,
       expiresAt: json.expires_in
@@ -129,7 +153,11 @@ export async function completeCodexDesktopOAuth(input: {
         : undefined,
       raw: json as unknown as Record<string, unknown>,
     }),
-    meta: { method: "desktop_oauth" },
+    meta: {
+      method: "desktop_oauth",
+      redirectUri: CODEX_OAUTH.redirectUri,
+      originator: CODEX_OAUTH.originator,
+    },
   });
   await db.deletePendingFlow(input.flowId);
   return conn;

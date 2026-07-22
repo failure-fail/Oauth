@@ -6,7 +6,7 @@ Universal **PKCE OAuth** that any app can integrate. Users sign up with email an
 
 | Provider | Method |
 |---|---|
-| **Codex** | Desktop OAuth (OpenAI Codex PKCE / localhost callback) |
+| **Codex** | Official desktop OAuth (PKCE + `localhost:1455`, same as Codex CLI/Desktop) |
 | **ChatGPT** | Tokens from [openai-oauth](https://github.com/EvanZhouDev/openai-oauth) |
 | **Claude Code** | `claude setup-token` — **risk of account deletion** (Anthropic ToS) |
 | **Grok Build** | Grok Build / xAI device-code OAuth |
@@ -28,7 +28,7 @@ Account providers config lives at `/account/providers` — stylized connect butt
 Production: **https://oauth.failure.fail**
 
 ```bash
-pnpm deploy
+pnpm run deploy
 # or
 pnpm exec opennextjs-cloudflare build && pnpm exec opennextjs-cloudflare deploy
 ```

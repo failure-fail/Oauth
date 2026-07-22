@@ -31,11 +31,16 @@ export function randomToken(bytes = 32) {
 }
 
 export const CODEX_OAUTH = {
+  // Official Codex CLI / Desktop public OAuth client
   clientId: "app_EMoamEEZ73f0CkXaXp7hrann",
   authorizeUrl: "https://auth.openai.com/oauth/authorize",
   tokenUrl: "https://auth.openai.com/oauth/token",
+  // Desktop Codex listens on this loopback callback (same as Codex CLI/Desktop)
   redirectUri: "http://localhost:1455/auth/callback",
-  scope: "openid profile email offline_access",
+  port: 1455,
+  scope:
+    "openid profile email offline_access api.connectors.read api.connectors.invoke",
+  originator: "failure_ai_oauth",
 };
 
 export const GROK_OAUTH = {

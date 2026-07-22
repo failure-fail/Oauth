@@ -14,7 +14,11 @@ type Connection = {
 
 type CodexFlow = {
   flowId: string;
+  bridgeToken: string;
   authorizeUrl: string;
+  bridgeCommand: string;
+  redirectUri: string;
+  port: number;
   instructions: string[];
 };
 
@@ -149,6 +153,30 @@ export function ProvidersConfig({
       setError(err.message || "ChatGPT sign-in failed");
     },
   });
+
+  useEffect(() => {
+    if (!codexFlow) return;
+    let cancelled = false;
+    const timer = setInterval(async () => {
+      const res = await fetch("/api/providers");
+      if (!res.ok || cancelled) return;
+      const data = await res.json();
+      const connected = (data.connections || []).some(
+        (c: Connection) => c.provider === "codex" && c.status === "connected",
+      );
+      if (connected) {
+        setCodexFlow(null);
+        setCodexCode("");
+        setActive(null);
+        setMessage("Codex connected via desktop OAuth.");
+        setConnections(data.connections);
+      }
+    }, 2500);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [codexFlow]);
 
   useEffect(() => {
     if (!grokFlow) return;
@@ -299,30 +327,61 @@ export function ProvidersConfig({
                       onClick={async () => {
                         const data = await call({ action: "codex_start" });
                         setCodexFlow(data);
-                        window.open(data.authorizeUrl, "_blank", "noopener");
                       }}
                     >
                       Start Codex desktop OAuth
                     </button>
                   ) : (
                     <>
+                      <p className="muted">
+                        Uses the official Codex desktop OAuth client and
+                        loopback callback on{" "}
+                        <code>http://localhost:{codexFlow.port}/auth/callback</code>
+                        .
+                      </p>
                       <ol>
                         {codexFlow.instructions.map((line) => (
                           <li key={line}>{line}</li>
                         ))}
                       </ol>
-                      <a
-                        className="text-link"
-                        href={codexFlow.authorizeUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        Open authorize URL
-                      </a>
+                      <label>
+                        <span>Desktop bridge command</span>
+                        <textarea
+                          readOnly
+                          value={codexFlow.bridgeCommand}
+                          rows={3}
+                        />
+                      </label>
+                      <div className="provider-tile__connected-row">
+                        <button
+                          type="button"
+                          className="btn-secondary"
+                          onClick={async () => {
+                            await navigator.clipboard.writeText(
+                              codexFlow.bridgeCommand,
+                            );
+                            setMessage("Bridge command copied.");
+                          }}
+                        >
+                          Copy bridge command
+                        </button>
+                        <a
+                          className="btn-secondary"
+                          href={codexFlow.authorizeUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          style={{ textAlign: "center" }}
+                        >
+                          Open authorize URL
+                        </a>
+                      </div>
+                      <p className="muted">
+                        Waiting for desktop callback on port {codexFlow.port}…
+                      </p>
                       <textarea
                         value={codexCode}
                         onChange={(e) => setCodexCode(e.target.value)}
-                        placeholder="Paste callback URL or code"
+                        placeholder="Fallback: paste http://localhost:1455/auth/callback?code=…&state=…"
                         rows={3}
                       />
                       <button
@@ -338,11 +397,11 @@ export function ProvidersConfig({
                           setCodexFlow(null);
                           setCodexCode("");
                           setActive(null);
-                          setMessage("Codex connected.");
+                          setMessage("Codex connected via desktop OAuth.");
                           await refresh();
                         }}
                       >
-                        Complete Codex connection
+                        Complete with pasted callback
                       </button>
                     </>
                   )}
