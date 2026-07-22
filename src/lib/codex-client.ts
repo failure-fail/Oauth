@@ -66,6 +66,22 @@ async function resolveCodexClientVersion(): Promise<string> {
 
 const FALLBACK_CHAT_MODELS: ProviderModel[] = [
   {
+    id: "gpt-5.6-sol",
+    name: "GPT-5.6 Sol",
+    kind: "chat",
+    reasoningLevels: DEFAULT_REASONING_LEVELS,
+    defaultReasoningLevel: "medium",
+    supportsReasoningSummaries: true,
+  },
+  {
+    id: "gpt-5.6",
+    name: "GPT-5.6",
+    kind: "chat",
+    reasoningLevels: DEFAULT_REASONING_LEVELS,
+    defaultReasoningLevel: "medium",
+    supportsReasoningSummaries: true,
+  },
+  {
     id: "gpt-5.5",
     name: "GPT-5.5",
     kind: "chat",
@@ -97,7 +113,13 @@ const FALLBACK_CHAT_MODELS: ProviderModel[] = [
     defaultReasoningLevel: "medium",
     supportsReasoningSummaries: true,
   },
-  { id: "o4-mini", name: "o4-mini", kind: "chat", reasoningLevels: ["low", "medium", "high"], defaultReasoningLevel: "medium" },
+  {
+    id: "o4-mini",
+    name: "o4-mini",
+    kind: "chat",
+    reasoningLevels: ["low", "medium", "high"],
+    defaultReasoningLevel: "medium",
+  },
 ];
 
 function asThinkingLevel(value: unknown): ThinkingLevel | null {
@@ -235,14 +257,59 @@ function withImageModel(models: ProviderModel[]): ProviderModel[] {
   return out;
 }
 
-function pickModelIds(payload: unknown): ProviderModel[] {
-  if (!payload || typeof payload !== "object") return [];
-  const root = payload as Record<string, unknown>;
-  const buckets: unknown[] = [];
-  if (Array.isArray(root.data)) buckets.push(...root.data);
-  if (Array.isArray(root.models)) buckets.push(...root.models);
-  if (Array.isArray(payload)) buckets.push(...payload);
+function collectModelBuckets(payload: unknown, into: unknown[] = []): unknown[] {
+  if (!payload) return into;
+  if (Array.isArray(payload)) {
+    for (const item of payload) {
+      if (typeof item === "string") {
+        into.push(item);
+        continue;
+      }
+      if (!item || typeof item !== "object") continue;
+      const row = item as Record<string, unknown>;
+      if (
+        typeof row.id === "string" ||
+        typeof row.slug === "string" ||
+        typeof row.model === "string" ||
+        typeof row.model_id === "string"
+      ) {
+        into.push(item);
+      }
+      for (const key of [
+        "models",
+        "data",
+        "items",
+        "groups",
+        "categories",
+        "available_models",
+        "entries",
+        "results",
+      ]) {
+        if (row[key] !== undefined) collectModelBuckets(row[key], into);
+      }
+    }
+    return into;
+  }
+  if (typeof payload === "object") {
+    const root = payload as Record<string, unknown>;
+    for (const key of [
+      "models",
+      "data",
+      "items",
+      "groups",
+      "categories",
+      "available_models",
+      "entries",
+      "results",
+    ]) {
+      if (root[key] !== undefined) collectModelBuckets(root[key], into);
+    }
+  }
+  return into;
+}
 
+function pickModelIds(payload: unknown): ProviderModel[] {
+  const buckets = collectModelBuckets(payload);
   const models: ProviderModel[] = [];
   const seen = new Set<string>();
   for (const item of buckets) {
@@ -266,17 +333,19 @@ function pickModelIds(payload: unknown): ProviderModel[] {
     const id =
       (typeof row.id === "string" && row.id) ||
       (typeof row.slug === "string" && row.slug) ||
+      (typeof row.model === "string" && row.model) ||
+      (typeof row.model_id === "string" && row.model_id) ||
       null;
     if (!id || seen.has(id)) continue;
-    if (row.supported_in_api === false || row.supportedInApi === false) continue;
-    if (typeof row.visibility === "string" && row.visibility !== "list") continue;
+    // Keep every model the account catalog returns — do not filter by
+    // supported_in_api / visibility; the live list is the source of truth.
     seen.add(id);
     const name =
       (typeof row.display_name === "string" && row.display_name) ||
       (typeof row.name === "string" && row.name) ||
+      (typeof row.title === "string" && row.title) ||
       id;
     const reasoning = extractReasoningMeta(row);
-    // Some catalogs nest metadata under `model` / `info`
     const nested =
       (row.model && typeof row.model === "object"
         ? extractReasoningMeta(row.model as Record<string, unknown>)
@@ -284,25 +353,39 @@ function pickModelIds(payload: unknown): ProviderModel[] {
       (row.info && typeof row.info === "object"
         ? extractReasoningMeta(row.info as Record<string, unknown>)
         : null);
+    const isImage =
+      id === CODEX_IMAGE_MODEL ||
+      id.includes("image") ||
+      id.includes("gpt-image");
     models.push({
       id,
       name,
-      kind: id === CODEX_IMAGE_MODEL ? "image" : "chat",
+      kind: isImage ? "image" : "chat",
       reasoningLevels:
         reasoning.reasoningLevels ||
         nested?.reasoningLevels ||
-        (id === CODEX_IMAGE_MODEL ? undefined : DEFAULT_REASONING_LEVELS),
+        (isImage ? undefined : DEFAULT_REASONING_LEVELS),
       defaultReasoningLevel:
         reasoning.defaultReasoningLevel ||
         nested?.defaultReasoningLevel ||
-        (id === CODEX_IMAGE_MODEL ? undefined : "medium"),
+        (isImage ? undefined : "medium"),
       supportsReasoningSummaries:
         reasoning.supportsReasoningSummaries ||
         nested?.supportsReasoningSummaries ||
-        id !== CODEX_IMAGE_MODEL,
+        !isImage,
     });
   }
   return models;
+}
+
+function userInputList(prompt: string) {
+  return [
+    {
+      type: "message",
+      role: "user",
+      content: [{ type: "input_text", text: prompt }],
+    },
+  ];
 }
 
 type UpstreamAttempt = {
@@ -557,6 +640,8 @@ export async function chatCodex(
     listed.models.some((m) => m.id === options.model && m.kind !== "image")
       ? options.model
       : preferModel(listed.models, [
+          "gpt-5.6-sol",
+          "gpt-5.6",
           "gpt-5.5",
           "gpt-5.4",
           "gpt-5.3-codex",
@@ -571,7 +656,7 @@ export async function chatCodex(
   const body: Record<string, unknown> = {
     model: selected,
     instructions: "You are a helpful assistant used to test Failure AI OAuth.",
-    input: prompt,
+    input: userInputList(prompt),
     store: false,
     stream: true,
     include: ["reasoning.encrypted_content"],
@@ -718,7 +803,13 @@ async function generateCodexImageViaResponses(
   },
 ) {
   const listed = await listCodexModels(secret);
-  const host = preferModel(listed.models, ["gpt-5.5", "gpt-5.4", "gpt-5"]);
+  const host = preferModel(listed.models, [
+    "gpt-5.6-sol",
+    "gpt-5.6",
+    "gpt-5.5",
+    "gpt-5.4",
+    "gpt-5",
+  ]);
   const tool: Record<string, unknown> = {
     type: "image_generation",
   };
@@ -728,7 +819,8 @@ async function generateCodexImageViaResponses(
 
   const body = JSON.stringify({
     model: host,
-    input: input.prompt,
+    instructions: "You are Codex, OpenAI's coding agent.",
+    input: userInputList(input.prompt),
     tools: [tool],
     tool_choice: { type: "image_generation" },
     store: false,
@@ -839,7 +931,13 @@ async function editCodexImageViaResponses(
   },
 ) {
   const listed = await listCodexModels(secret);
-  const host = preferModel(listed.models, ["gpt-5.5", "gpt-5.4", "gpt-5"]);
+  const host = preferModel(listed.models, [
+    "gpt-5.6-sol",
+    "gpt-5.6",
+    "gpt-5.5",
+    "gpt-5.4",
+    "gpt-5",
+  ]);
   const tool: Record<string, unknown> = { type: "image_generation" };
   if (input.size) tool.size = input.size;
   if (input.quality) tool.quality = input.quality;
@@ -856,7 +954,8 @@ async function editCodexImageViaResponses(
 
   const body = JSON.stringify({
     model: host,
-    input: [{ role: "user", content }],
+    instructions: "You are Codex, OpenAI's coding agent.",
+    input: [{ type: "message", role: "user", content }],
     tools: [tool],
     tool_choice: { type: "image_generation" },
     store: false,
