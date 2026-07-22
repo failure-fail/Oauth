@@ -968,3 +968,109 @@ textarea {
   border-color: color-mix(in srgb, var(--provider-accent, var(--ember)) 50%, transparent);
   background: color-mix(in srgb, var(--provider-accent, var(--ember)) 16%, transparent);
 }
+
+.chat-shell {
+  display: grid;
+  gap: 1rem;
+}
+
+.chat-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  align-items: end;
+  justify-content: space-between;
+}
+
+.chat-toolbar label {
+  display: grid;
+  gap: 0.35rem;
+  min-width: min(240px, 100%);
+}
+
+.chat-toolbar span {
+  color: var(--smoke);
+  font-size: 0.85rem;
+}
+
+.chat-toolbar select {
+  border-radius: 0.85rem;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.28);
+  color: var(--paper);
+  padding: 0.75rem 0.9rem;
+  font: inherit;
+}
+
+.chat-log {
+  min-height: 360px;
+  max-height: 58vh;
+  overflow: auto;
+  display: grid;
+  gap: 0.75rem;
+  padding: 1rem;
+  border-radius: 1.2rem;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background:
+    radial-gradient(circle at 10% 0%, rgba(255, 107, 53, 0.12), transparent 45%),
+    rgba(0, 0, 0, 0.28);
+}
+
+.chat-bubble {
+  max-width: min(640px, 100%);
+  padding: 0.85rem 1rem;
+  border-radius: 1rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.chat-bubble header {
+  display: flex;
+  gap: 0.4rem;
+  margin-bottom: 0.35rem;
+  color: var(--ember);
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.chat-bubble p {
+  margin: 0;
+  white-space: pre-wrap;
+  line-height: 1.5;
+  color: #efd9cc;
+}
+
+.chat-bubble--user {
+  justify-self: end;
+  background: linear-gradient(145deg, rgba(255, 107, 53, 0.2), rgba(255, 255, 255, 0.04));
+  border-color: rgba(255, 107, 53, 0.35);
+}
+
+.chat-bubble--assistant {
+  justify-self: start;
+}
+
+.chat-bubble--system {
+  justify-self: center;
+  max-width: 100%;
+  background: transparent;
+  border-style: dashed;
+}
+
+.chat-compose {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: 1fr auto;
+  align-items: end;
+}
+
+.chat-compose textarea {
+  min-height: 84px;
+}
+
+@media (max-width: 720px) {
+  .chat-compose {
+    grid-template-columns: 1fr;
+  }
+}

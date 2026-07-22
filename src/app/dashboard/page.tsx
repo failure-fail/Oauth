@@ -6,6 +6,7 @@ import { db } from "@/lib/db";
 import { connectionPublicView } from "@/lib/providers";
 import { AppsManager } from "@/components/AppsManager";
 import { FailureButtonCard } from "@/components/SignInWithFailure";
+import { AccountNav } from "@/components/AccountNav";
 import { PROVIDERS } from "@/lib/providers-meta";
 
 export default async function DashboardPage() {
@@ -26,13 +27,7 @@ export default async function DashboardPage() {
 
   return (
     <main className="page dashboard-grid">
-      <div className="account-subnav">
-        <Link href="/dashboard" className="is-active">
-          Overview
-        </Link>
-        <Link href="/account/providers">Providers</Link>
-        <Link href="/dashboard#apps">Apps</Link>
-      </div>
+      <AccountNav active="overview" />
 
       <section>
         <p className="eyebrow">Dashboard</p>
@@ -48,7 +43,7 @@ export default async function DashboardPage() {
           <p className="muted">
             {connections.length}/{PROVIDERS.length} connected. Configure Codex,
             ChatGPT, Claude Code, Grok Build, and Cursor from your account
-            providers page.
+            providers page — then try them in Chat.
           </p>
         </div>
         <div className="dash-provider-summary__pills">
@@ -65,9 +60,14 @@ export default async function DashboardPage() {
             );
           })}
         </div>
-        <Link className="btn-primary" href="/account/providers">
-          Open providers config
-        </Link>
+        <div className="hero-cta">
+          <Link className="btn-primary" href="/dashboard/chat">
+            Open chat test
+          </Link>
+          <Link className="btn-secondary" href="/account/providers">
+            Providers config
+          </Link>
+        </div>
       </section>
 
       <section id="apps">
