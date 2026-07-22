@@ -9,6 +9,7 @@ const FALLBACK_MODELS: ProviderModel[] = [
   { id: "gemini-2.5-pro", name: "Gemini 2.5 Pro", kind: "chat" },
 ];
 
+/** Headers used by VS Code Copilot Chat / OpenCode for Copilot API calls. */
 export function copilotHeaders(
   token: string,
   extra?: Record<string, string>,
@@ -52,62 +53,58 @@ function parseExpiresAt(value: unknown): number | null {
   return null;
 }
 
+/**
+ * Exchange GitHub OAuth token (ghu_) for a short-lived Copilot session token.
+ * Matches OpenCode: Authorization Bearer + VS Code editor headers.
+ */
 export async function exchangeCopilotSession(
   githubToken: string,
 ): Promise<{ token: string; expiresAt: number; apiBase: string }> {
-  const attempts: Array<Record<string, string>> = [
-    {
-      Accept: "application/json",
-      Authorization: `token ${githubToken}`,
-      ...COPILOT_OAUTH.headers,
-    },
-    {
+  const res = await fetch(COPILOT_OAUTH.sessionTokenUrl, {
+    method: "GET",
+    headers: {
       Accept: "application/json",
       Authorization: `Bearer ${githubToken}`,
       ...COPILOT_OAUTH.headers,
     },
-  ];
-
-  const errors: string[] = [];
-  for (const headers of attempts) {
-    const res = await fetch(COPILOT_OAUTH.sessionTokenUrl, {
+  });
+  if (!res.ok) {
+    // Older docs use `token` — try once for compatibility.
+    const retry = await fetch(COPILOT_OAUTH.sessionTokenUrl, {
       method: "GET",
-      headers,
+      headers: {
+        Accept: "application/json",
+        Authorization: `token ${githubToken}`,
+        ...COPILOT_OAUTH.headers,
+      },
     });
-    if (!res.ok) {
+    if (!retry.ok) {
       const text = await res.text();
-      errors.push(`${res.status} ${text.slice(0, 180)}`);
-      continue;
+      const retryText = await retry.text();
+      throw new Error(
+        `Copilot session token failed: ${res.status} ${text.slice(0, 160)} | ${retry.status} ${retryText.slice(0, 160)}`,
+      );
     }
-    const data = (await res.json()) as {
-      token?: string;
-      expires_at?: number | string;
-      endpoints?: { api?: string };
-    };
-    if (!data.token) {
-      errors.push("session response missing token");
-      continue;
-    }
-    const expiresAt =
-      parseExpiresAt(data.expires_at) || Date.now() + 25 * 60 * 1000;
-    const apiBase =
-      (typeof data.endpoints?.api === "string" && data.endpoints.api.replace(/\/$/, "")) ||
-      resolveCopilotApiBase(data.token);
-    return { token: data.token, expiresAt, apiBase };
+    return readSessionPayload(await retry.json());
   }
+  return readSessionPayload(await res.json());
+}
 
-  // Individual plans sometimes accept the raw GitHub token on the individual host.
-  if (/^gh[ou]_/i.test(githubToken)) {
-    return {
-      token: githubToken,
-      expiresAt: Date.now() + 8 * 60 * 60 * 1000,
-      apiBase: COPILOT_OAUTH.defaultApiBase,
-    };
-  }
-
-  throw new Error(
-    `Copilot session token failed: ${errors.join(" | ") || "unknown error"}`,
-  );
+function readSessionPayload(data: {
+  token?: string;
+  expires_at?: number | string;
+  endpoints?: { api?: string };
+}): { token: string; expiresAt: number; apiBase: string } {
+  if (!data.token) throw new Error("Copilot session response missing token");
+  // OpenCode: expires_at is unix seconds → ms, refresh 5 min early.
+  const expiresAt =
+    (parseExpiresAt(data.expires_at) || Date.now() + 25 * 60 * 1000) -
+    5 * 60 * 1000;
+  const apiBase =
+    (typeof data.endpoints?.api === "string" &&
+      data.endpoints.api.replace(/\/$/, "")) ||
+    resolveCopilotApiBase(data.token);
+  return { token: data.token, expiresAt, apiBase };
 }
 
 export async function refreshCopilotSession(
@@ -243,6 +240,8 @@ export async function chatCopilot(
     headers: {
       ...copilotHeaders(token),
       Accept: "text/event-stream",
+      "Openai-Intent": "conversation-edits",
+      "X-Initiator": "user",
     },
     body: JSON.stringify({
       stream: true,

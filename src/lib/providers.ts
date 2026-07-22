@@ -20,6 +20,10 @@ import {
   refreshCopilotSession,
 } from "./copilot-client";
 import {
+  pollCopilotDeviceCode,
+  requestCopilotDeviceCode,
+} from "./copilot-auth";
+import {
   buildMimoAuthorizeUrl,
   decryptMimoOAuthPayload,
   generateMimoOAuthKeyPair,
@@ -87,11 +91,12 @@ export function chatgptIsFedRampFromToken(token?: string): boolean {
 
 function tokenNeedsRefresh(secret: StoredProviderSecret): boolean {
   if (!secret.refreshToken) return false;
+  // OpenCode Copilot: may store refresh immediately with empty/expired access.
+  if (!secret.accessToken) return true;
+  if (secret.expiresAt === 0) return true;
   if (!secret.expiresAt) {
     // JWT with exp: refresh near expiry; opaque tokens refresh on demand via 401
-    const payload = secret.accessToken
-      ? decodeJwtPayload(secret.accessToken)
-      : null;
+    const payload = decodeJwtPayload(secret.accessToken);
     const exp = typeof payload?.exp === "number" ? payload.exp * 1000 : null;
     if (!exp) return false;
     return Date.now() >= exp - TOKEN_REFRESH_SKEW_MS;
@@ -1148,88 +1153,31 @@ export async function pollGrokDeviceOAuth(input: {
   return { status: "connected" as const, connection: conn };
 }
 
-function parseGithubOAuthTokenResponse(text: string): {
-  error?: string;
-  error_description?: string;
-  access_token?: string;
-  interval?: number;
-} {
-  const trimmed = text.trim();
-  if (!trimmed) return {};
-  if (trimmed.startsWith("{")) {
-    return JSON.parse(trimmed) as {
-      error?: string;
-      error_description?: string;
-      access_token?: string;
-      interval?: number;
-    };
-  }
-  // Some GitHub OAuth responses are still form-encoded despite Accept: json.
-  const params = new URLSearchParams(trimmed);
-  const intervalRaw = params.get("interval");
-  return {
-    error: params.get("error") || undefined,
-    error_description: params.get("error_description") || undefined,
-    access_token: params.get("access_token") || undefined,
-    interval: intervalRaw ? Number(intervalRaw) : undefined,
-  };
-}
-
 export async function startCopilotDeviceOAuth(userId: string) {
-  const body = new URLSearchParams({
-    client_id: COPILOT_OAUTH.clientId,
-    scope: COPILOT_OAUTH.scope,
-  });
-  const res = await fetch(COPILOT_OAUTH.deviceCodeUrl, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      Accept: "application/json",
-      "User-Agent": COPILOT_OAUTH.headers["User-Agent"],
-    },
-    body,
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Copilot device code failed: ${res.status} ${text}`);
-  }
-  const json = (await res.json()) as {
-    device_code: string;
-    user_code: string;
-    verification_uri: string;
-    verification_uri_complete?: string;
-    expires_in: number;
-    interval?: number;
-  };
-  if (!json.device_code || !json.user_code) {
-    throw new Error("GitHub device code response missing codes");
-  }
+  const auth = await requestCopilotDeviceCode();
   const flowId = randomUUID();
-  const interval = json.interval ?? 5;
   await db.savePendingFlow({
     id: flowId,
     userId,
     provider: "copilot",
     encryptedState: encryptSecret(
       JSON.stringify({
-        deviceCode: json.device_code,
-        userCode: json.user_code,
-        interval,
+        deviceCode: auth.deviceCode,
+        userCode: auth.userCode,
+        interval: auth.interval,
       }),
     ),
-    expiresAt: Date.now() + json.expires_in * 1000,
+    expiresAt: Date.now() + auth.expiresIn * 1000,
   });
   return {
     flowId,
-    // Returned so the browser polls the exact code shown / opened — avoids
-    // KV lag or a second Start overwriting the server flow while the user
-    // authorizes an older GitHub tab.
-    deviceCode: json.device_code,
-    userCode: json.user_code,
-    verificationUri: json.verification_uri,
-    verificationUriComplete: json.verification_uri_complete,
-    expiresIn: json.expires_in,
-    interval,
+    // Client must poll this exact device code (VS Code keeps it in-process).
+    deviceCode: auth.deviceCode,
+    userCode: auth.userCode,
+    verificationUri: auth.verificationUri,
+    verificationUriComplete: auth.verificationUriComplete,
+    expiresIn: auth.expiresIn,
+    interval: auth.interval,
   };
 }
 
@@ -1253,78 +1201,51 @@ export async function pollCopilotDeviceOAuth(input: {
       interval?: number;
     };
     interval = state.interval ?? 5;
-    // Prefer the device code the UI is displaying; fall back to stored.
     if (!deviceCode) deviceCode = state.deviceCode;
   } else if (!deviceCode) {
     throw new Error("Copilot flow not found or expired — start OAuth again");
   }
 
-  const body = new URLSearchParams({
-    grant_type: "urn:ietf:params:oauth:grant-type:device_code",
-    client_id: COPILOT_OAUTH.clientId,
-    device_code: deviceCode,
-  });
-  const res = await fetch(COPILOT_OAUTH.accessTokenUrl, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      Accept: "application/json",
-      "User-Agent": COPILOT_OAUTH.headers["User-Agent"],
-    },
-    body,
-  });
-  const text = await res.text();
-  let json: {
-    error?: string;
-    error_description?: string;
-    access_token?: string;
-    interval?: number;
-  };
-  try {
-    json = parseGithubOAuthTokenResponse(text);
-  } catch {
-    throw new Error(
-      `Copilot poll returned unreadable body (${res.status}): ${text.slice(0, 200)}`,
-    );
+  const polled = await pollCopilotDeviceCode(deviceCode, interval);
+  if (polled.status === "pending" || polled.status === "slow_down") {
+    return {
+      status: polled.status,
+      interval: polled.interval,
+    };
   }
-  if (!res.ok || json.error) {
+  if (polled.status !== "complete") {
     if (
-      json.error === "authorization_pending" ||
-      json.error === "slow_down"
-    ) {
-      return {
-        status: json.error as "authorization_pending" | "slow_down",
-        interval: json.interval || interval,
-      };
-    }
-    // Concurrent polls: first redeem wins; later ones should not wipe UX.
-    if (
-      json.error === "incorrect_device_code" ||
-      json.error === "expired_token"
+      polled.status === "failed" &&
+      /incorrect_device_code/i.test(polled.error)
     ) {
       const again = await db.getConnection(input.userId, "copilot");
       if (again?.status === "connected") {
         return { status: "connected" as const, connection: again };
       }
     }
-    throw new Error(
-      json.error_description ||
-        json.error ||
-        `Copilot poll failed (${res.status})`,
-    );
+    throw new Error(polled.error);
   }
-  if (!json.access_token) throw new Error("Missing GitHub access token");
 
-  let session: Awaited<ReturnType<typeof exchangeCopilotSession>>;
+  // OpenCode stores the GitHub token as refresh immediately, then exchanges
+  // for a Copilot session token (access). Do the same; connect even if the
+  // session exchange is deferred to first API use.
+  const githubToken = polled.githubToken;
+  let accessToken = "";
+  let expiresAt = 0;
+  let apiBase = COPILOT_OAUTH.defaultApiBase;
+  let warning: string | undefined;
   try {
-    session = await exchangeCopilotSession(json.access_token);
+    const session = await exchangeCopilotSession(githubToken);
+    accessToken = session.token;
+    expiresAt = session.expiresAt;
+    apiBase = session.apiBase;
   } catch (error) {
-    throw new Error(
+    warning =
       error instanceof Error
-        ? `GitHub authorized, but Copilot session exchange failed: ${error.message}. Confirm the account has an active Copilot subscription.`
-        : "GitHub authorized, but Copilot session exchange failed",
-    );
+        ? `GitHub login ok; Copilot session will refresh on first use (${error.message})`
+        : "GitHub login ok; Copilot session will refresh on first use";
   }
+
   const conn = await db.upsertConnection({
     userId: input.userId,
     provider: "copilot",
@@ -1332,14 +1253,15 @@ export async function pollCopilotDeviceOAuth(input: {
     label: "GitHub Copilot",
     encryptedPayload: storeProviderSecret({
       type: "github_copilot_oauth",
-      accessToken: session.token,
-      refreshToken: json.access_token,
-      expiresAt: session.expiresAt,
-      raw: { apiBase: session.apiBase },
+      accessToken: accessToken || undefined,
+      refreshToken: githubToken,
+      expiresAt,
+      raw: { apiBase },
     }),
     meta: {
       method: "device_oauth",
-      apiBase: session.apiBase,
+      apiBase,
+      ...(warning ? { warning } : {}),
     },
   });
   await db.deletePendingFlow(input.flowId);

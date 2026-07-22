@@ -100,14 +100,19 @@ export const CLAUDE_OAUTH = {
   userAgent: "claude-cli/2.0.0 (external, failure-ai-oauth)",
 };
 
-/** GitHub Copilot — same public GitHub App as VS Code / Copilot Chat. */
+/**
+ * GitHub Copilot — identical to VS Code Copilot Chat / OpenCode.
+ * Client ID Iv1.b507a08c87ecfe98 is the public VS Code GitHub App.
+ * Device + token requests use JSON bodies (not form-urlencoded).
+ */
 export const COPILOT_OAUTH = {
   clientId: "Iv1.b507a08c87ecfe98",
   deviceCodeUrl: "https://github.com/login/device/code",
   accessTokenUrl: "https://github.com/login/oauth/access_token",
   sessionTokenUrl: "https://api.github.com/copilot_internal/v2/token",
   scope: "read:user",
-  defaultApiBase: "https://api.individual.githubcopilot.com",
+  /** OpenCode / VS Code default host for individual accounts. */
+  defaultApiBase: "https://api.githubcopilot.com",
   headers: {
     "User-Agent": "GitHubCopilotChat/0.35.0",
     "Editor-Version": "vscode/1.107.0",

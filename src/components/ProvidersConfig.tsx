@@ -324,14 +324,26 @@ export function ProvidersConfig({
           return "done" as const;
         }
         if (data.status === "slow_down") {
-          delayMs = Math.min(delayMs + 5000, 20000);
+          delayMs = Math.min(
+            Math.max(delayMs + 5000, (data.interval || 10) * 1000),
+            20000,
+          );
           setCopilotPollNote(
             `GitHub asked us to slow down — retrying (check #${checks})…`,
           );
           return "pending" as const;
         }
-        if (typeof data.interval === "number" && data.interval > 0) {
-          delayMs = Math.max(delayMs, data.interval * 1000);
+        if (
+          data.status === "pending" ||
+          data.status === "authorization_pending"
+        ) {
+          if (typeof data.interval === "number" && data.interval > 0) {
+            delayMs = Math.max(delayMs, data.interval * 1000);
+          }
+          setCopilotPollNote(
+            `Waiting for GitHub approval… (check #${checks})`,
+          );
+          return "pending" as const;
         }
         setCopilotPollNote(
           `Waiting for GitHub approval… (check #${checks})`,
@@ -730,9 +742,9 @@ export function ProvidersConfig({
                       </p>
                       <p className="user-code">{copilotFlow.userCode}</p>
                       <p className="muted">
-                        Authorize only this code. Do not click Start again —
-                        that creates a new code and the old authorize page will
-                        never verify. After GitHub confirms, press Check now.
+                        Same flow as VS Code Copilot Chat: open GitHub, confirm
+                        the code above, then return here. Do not click Start
+                        again — that creates a new code.
                       </p>
                       {copilotPollNote ? (
                         <p className="muted">{copilotPollNote}</p>
