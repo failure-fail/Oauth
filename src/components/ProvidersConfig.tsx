@@ -37,9 +37,20 @@ type GrokFlow = {
   interval: number;
 };
 
+type CopilotFlow = {
+  flowId: string;
+  userCode: string;
+  verificationUri: string;
+  verificationUriComplete?: string;
+  interval: number;
+};
+
 const GLYPH: Record<ProviderId, string> = {
   codex: "C",
   antigravity: "A",
+  copilot: "GH",
+  mistral: "M",
+  mimo: "米",
   claude: "◆",
   grok: "G",
 };
@@ -108,6 +119,10 @@ export function ProvidersConfig({
   const [claudeToken, setClaudeToken] = useState("");
   const [claudeAck, setClaudeAck] = useState(false);
   const [grokFlow, setGrokFlow] = useState<GrokFlow | null>(null);
+  const [copilotFlow, setCopilotFlow] = useState<CopilotFlow | null>(null);
+  const [mistralApiKey, setMistralApiKey] = useState("");
+  const [mimoApiKey, setMimoApiKey] = useState("");
+  const [mimoBaseUrl, setMimoBaseUrl] = useState("");
 
   const byProvider = useMemo(() => {
     const map = new Map<string, Connection>();
@@ -188,6 +203,32 @@ export function ProvidersConfig({
       clearInterval(timer);
     };
   }, [grokFlow]);
+
+  useEffect(() => {
+    if (!copilotFlow) return;
+    let cancelled = false;
+    const timer = setInterval(async () => {
+      try {
+        const data = await call({
+          action: "copilot_poll",
+          flowId: copilotFlow.flowId,
+        });
+        if (cancelled) return;
+        if (data.status === "connected") {
+          setCopilotFlow(null);
+          setActive(null);
+          setMessage("GitHub Copilot connected.");
+          await refresh();
+        }
+      } catch {
+        // keep polling until expiry surfaces
+      }
+    }, Math.max(3, copilotFlow.interval) * 1000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [copilotFlow]);
 
   async function disconnect(provider: ProviderId) {
     await call({ action: "disconnect", provider });
@@ -426,6 +467,111 @@ export function ProvidersConfig({
                       </button>
                     </>
                   )}
+                </div>
+              )}
+
+              {open && provider.id === "copilot" && (
+                <div className="provider-form">
+                  {!copilotFlow ? (
+                    <button
+                      type="button"
+                      className="btn-primary"
+                      disabled={busy}
+                      onClick={async () => {
+                        const data = await call({ action: "copilot_start" });
+                        setCopilotFlow(data);
+                        window.open(
+                          data.verificationUriComplete || data.verificationUri,
+                          "_blank",
+                          "noopener",
+                        );
+                      }}
+                    >
+                      Start GitHub Copilot OAuth
+                    </button>
+                  ) : (
+                    <>
+                      <p>
+                        Enter this code at{" "}
+                        <a
+                          className="text-link"
+                          href={copilotFlow.verificationUri}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          {copilotFlow.verificationUri}
+                        </a>
+                      </p>
+                      <p className="user-code">{copilotFlow.userCode}</p>
+                      <p className="muted">Waiting for approval…</p>
+                    </>
+                  )}
+                </div>
+              )}
+
+              {open && provider.id === "mistral" && (
+                <div className="provider-form">
+                  <input
+                    value={mistralApiKey}
+                    onChange={(e) => setMistralApiKey(e.target.value)}
+                    placeholder="Paste API key from console.mistral.ai"
+                  />
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    disabled={busy || !mistralApiKey}
+                    onClick={async () => {
+                      await call({
+                        action: "mistral_connect",
+                        apiKey: mistralApiKey,
+                      });
+                      setMistralApiKey("");
+                      setActive(null);
+                      setMessage("Mistral connected.");
+                      await refresh();
+                    }}
+                  >
+                    Save Mistral API key
+                  </button>
+                </div>
+              )}
+
+              {open && provider.id === "mimo" && (
+                <div className="provider-form">
+                  <input
+                    value={mimoApiKey}
+                    onChange={(e) => setMimoApiKey(e.target.value)}
+                    placeholder="sk-… or tp-… key"
+                  />
+                  <input
+                    value={mimoBaseUrl}
+                    onChange={(e) => setMimoBaseUrl(e.target.value)}
+                    placeholder="Optional Token Plan base URL"
+                  />
+                  <p className="muted">
+                    sk- → api.xiaomimimo.com, tp- → token-plan-cn.xiaomimimo.com
+                  </p>
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    disabled={busy || !mimoApiKey}
+                    onClick={async () => {
+                      await call({
+                        action: "mimo_connect",
+                        apiKey: mimoApiKey,
+                        ...(mimoBaseUrl.trim()
+                          ? { baseUrl: mimoBaseUrl.trim() }
+                          : {}),
+                      });
+                      setMimoApiKey("");
+                      setMimoBaseUrl("");
+                      setActive(null);
+                      setMessage("Xiaomi MiMo connected.");
+                      await refresh();
+                    }}
+                  >
+                    Save MiMo API key
+                  </button>
                 </div>
               )}
 
