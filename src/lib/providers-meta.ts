@@ -49,7 +49,7 @@ export const PROVIDERS = [
     buttonLabel: "Connect Grok Build",
     connectedLabel: "Connected to Grok Build",
     description:
-      "Authorize with xAI Grok Build via the official device-code OAuth flow.",
+      "Authorize with xAI Grok Build via device-code OAuth. Tokens talk to cli-chat-proxy.grok.com (not api.x.ai).",
     method: "device_oauth",
     docsUrl: "https://docs.x.ai/build/overview",
     accent: "#e8e8e8",

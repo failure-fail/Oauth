@@ -27,7 +27,7 @@ export async function POST(req: Request) {
     }
     const result = await runProviderChat({
       provider: body.provider,
-      encryptedPayload: conn.encryptedPayload,
+      connection: conn,
       prompt: body.prompt,
       model: body.model,
     });

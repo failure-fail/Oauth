@@ -1,18 +1,26 @@
 import { randomUUID } from "crypto";
-import { CODEX_OAUTH, GROK_OAUTH, type ProviderId } from "./config";
+import {
+  CLAUDE_OAUTH,
+  CODEX_OAUTH,
+  GROK_OAUTH,
+  randomToken,
+  type ProviderId,
+} from "./config";
 import { encryptSecret, decryptSecret, pkceChallengeFromVerifier } from "./crypto";
 import { db, type ProviderConnection } from "./db";
-import { randomToken } from "./config";
 
 export type StoredProviderSecret = {
   type: string;
   accessToken?: string;
   refreshToken?: string;
   expiresAt?: number;
+  accountId?: string;
   accountKey?: string;
   setupToken?: string;
   raw?: Record<string, unknown>;
 };
+
+const TOKEN_REFRESH_SKEW_MS = 60_000;
 
 export function storeProviderSecret(secret: StoredProviderSecret) {
   return encryptSecret(JSON.stringify(secret));
@@ -20,6 +28,270 @@ export function storeProviderSecret(secret: StoredProviderSecret) {
 
 export function readProviderSecret(encrypted: string): StoredProviderSecret {
   return JSON.parse(decryptSecret(encrypted)) as StoredProviderSecret;
+}
+
+function decodeJwtPayload(token: string): Record<string, unknown> | null {
+  try {
+    const part = token.split(".")[1];
+    if (!part) return null;
+    return JSON.parse(Buffer.from(part, "base64url").toString("utf8")) as Record<
+      string,
+      unknown
+    >;
+  } catch {
+    return null;
+  }
+}
+
+export function chatgptAccountIdFromToken(token: string): string | null {
+  const payload = decodeJwtPayload(token);
+  if (!payload) return null;
+  const auth = payload["https://api.openai.com/auth"] as
+    | { chatgpt_account_id?: string }
+    | undefined;
+  return auth?.chatgpt_account_id || null;
+}
+
+function tokenNeedsRefresh(secret: StoredProviderSecret): boolean {
+  if (!secret.refreshToken) return false;
+  if (!secret.expiresAt) {
+    // JWT with exp: refresh near expiry; opaque tokens refresh on demand via 401
+    const payload = secret.accessToken
+      ? decodeJwtPayload(secret.accessToken)
+      : null;
+    const exp = typeof payload?.exp === "number" ? payload.exp * 1000 : null;
+    if (!exp) return false;
+    return Date.now() >= exp - TOKEN_REFRESH_SKEW_MS;
+  }
+  return Date.now() >= secret.expiresAt - TOKEN_REFRESH_SKEW_MS;
+}
+
+async function refreshOpenAiCodexTokens(
+  refreshToken: string,
+): Promise<StoredProviderSecret> {
+  const body = new URLSearchParams({
+    grant_type: "refresh_token",
+    refresh_token: refreshToken,
+    client_id: CODEX_OAUTH.clientId,
+  });
+  const res = await fetch(CODEX_OAUTH.tokenUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      Accept: "application/json",
+    },
+    body,
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`OpenAI token refresh failed: ${res.status} ${text.slice(0, 300)}`);
+  }
+  const json = (await res.json()) as {
+    access_token: string;
+    refresh_token?: string;
+    expires_in?: number;
+  };
+  const accountId = chatgptAccountIdFromToken(json.access_token);
+  return {
+    type: "openai_oauth_refreshed",
+    accessToken: json.access_token,
+    refreshToken: json.refresh_token || refreshToken,
+    expiresAt: json.expires_in
+      ? Date.now() + json.expires_in * 1000
+      : undefined,
+    accountId: accountId || undefined,
+    raw: json as unknown as Record<string, unknown>,
+  };
+}
+
+async function refreshGrokTokens(
+  refreshToken: string,
+): Promise<StoredProviderSecret> {
+  const body = new URLSearchParams({
+    grant_type: "refresh_token",
+    refresh_token: refreshToken,
+    client_id: GROK_OAUTH.clientId,
+  });
+  const res = await fetch(GROK_OAUTH.tokenUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      Accept: "application/json",
+      "User-Agent": `xai-grok-workspace/${GROK_OAUTH.clientVersion}`,
+    },
+    body,
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Grok token refresh failed: ${res.status} ${text.slice(0, 300)}`);
+  }
+  const json = (await res.json()) as {
+    access_token: string;
+    refresh_token?: string;
+    expires_in?: number;
+  };
+  return {
+    type: "grok_build_oauth",
+    accessToken: json.access_token,
+    refreshToken: json.refresh_token || refreshToken,
+    expiresAt: json.expires_in
+      ? Date.now() + json.expires_in * 1000
+      : undefined,
+    raw: json as unknown as Record<string, unknown>,
+  };
+}
+
+/** Refresh provider tokens if needed and persist back to the connection. */
+export async function ensureFreshConnection(
+  conn: ProviderConnection,
+): Promise<{ connection: ProviderConnection; secret: StoredProviderSecret }> {
+  let secret = readProviderSecret(conn.encryptedPayload);
+
+  if (
+    (conn.provider === "codex" || conn.provider === "chatgpt") &&
+    tokenNeedsRefresh(secret) &&
+    secret.refreshToken
+  ) {
+    const refreshed = await refreshOpenAiCodexTokens(secret.refreshToken);
+    secret = {
+      ...secret,
+      ...refreshed,
+      type: secret.type || refreshed.type,
+      accountId:
+        refreshed.accountId ||
+        secret.accountId ||
+        (typeof secret.raw?.accountId === "string"
+          ? secret.raw.accountId
+          : undefined),
+    };
+    conn = await db.upsertConnection({
+      userId: conn.userId,
+      provider: conn.provider,
+      status: conn.status,
+      label: conn.label,
+      encryptedPayload: storeProviderSecret(secret),
+      meta: conn.meta,
+    });
+  }
+
+  if (
+    conn.provider === "grok" &&
+    tokenNeedsRefresh(secret) &&
+    secret.refreshToken
+  ) {
+    const refreshed = await refreshGrokTokens(secret.refreshToken);
+    secret = { ...secret, ...refreshed };
+    conn = await db.upsertConnection({
+      userId: conn.userId,
+      provider: "grok",
+      status: conn.status,
+      label: conn.label,
+      encryptedPayload: storeProviderSecret(secret),
+      meta: conn.meta,
+    });
+  }
+
+  // Normalize OpenAI account id onto the secret for downstream callers
+  if (
+    (conn.provider === "codex" || conn.provider === "chatgpt") &&
+    secret.accessToken &&
+    !secret.accountId
+  ) {
+    secret.accountId =
+      chatgptAccountIdFromToken(secret.accessToken) ||
+      (typeof secret.raw?.accountId === "string"
+        ? secret.raw.accountId
+        : undefined);
+  }
+
+  return { connection: conn, secret };
+}
+
+/** Usable credential package apps receive under the `providers` scope. */
+export function exposeProviderCredentials(
+  provider: ProviderId,
+  secret: StoredProviderSecret,
+) {
+  switch (provider) {
+    case "codex":
+    case "chatgpt":
+      return {
+        type: secret.type,
+        protocol: "codex_backend",
+        accessToken: secret.accessToken ?? null,
+        refreshToken: secret.refreshToken ?? null,
+        expiresAt: secret.expiresAt ?? null,
+        accountId: secret.accountId ?? null,
+        endpoints: {
+          models: CODEX_OAUTH.modelsUrl,
+          responses: CODEX_OAUTH.responsesUrl,
+          token: CODEX_OAUTH.tokenUrl,
+        },
+        requiredHeaders: {
+          Authorization: "Bearer <accessToken>",
+          "ChatGPT-Account-Id": "<accountId>",
+          "OpenAI-Beta": "responses=experimental",
+          originator: CODEX_OAUTH.originator,
+        },
+        oauth: {
+          clientId: CODEX_OAUTH.clientId,
+          scope: CODEX_OAUTH.scope,
+        },
+      };
+    case "claude":
+      return {
+        type: secret.type,
+        protocol: "anthropic_oauth",
+        setupToken: secret.setupToken ?? secret.accessToken ?? null,
+        accessToken: secret.setupToken ?? secret.accessToken ?? null,
+        endpoints: {
+          models: CLAUDE_OAUTH.modelsUrl,
+          messages: CLAUDE_OAUTH.messagesUrl,
+        },
+        requiredHeaders: {
+          Authorization: "Bearer <setupToken>",
+          "anthropic-version": CLAUDE_OAUTH.version,
+          "anthropic-beta": CLAUDE_OAUTH.beta,
+          "anthropic-dangerous-direct-browser-access": "true",
+          "User-Agent": CLAUDE_OAUTH.userAgent,
+          "x-app": "cli",
+        },
+        risk: "Using Claude Code OAuth outside Claude Code can risk account deletion.",
+      };
+    case "grok":
+      return {
+        type: secret.type,
+        protocol: "grok_cli_proxy",
+        accessToken: secret.accessToken ?? null,
+        refreshToken: secret.refreshToken ?? null,
+        expiresAt: secret.expiresAt ?? null,
+        endpoints: {
+          models: GROK_OAUTH.modelsUrl,
+          responses: GROK_OAUTH.responsesUrl,
+          token: GROK_OAUTH.tokenUrl,
+          proxyBase: GROK_OAUTH.proxyBaseUrl,
+        },
+        requiredHeaders: {
+          Authorization: "Bearer <accessToken>",
+          "X-XAI-Token-Auth": GROK_OAUTH.tokenAuth,
+          "x-authenticateresponse": "authenticate-response",
+          "x-grok-client-version": GROK_OAUTH.clientVersion,
+          "x-grok-client-mode": "headless",
+          "User-Agent": `xai-grok-workspace/${GROK_OAUTH.clientVersion}`,
+        },
+        oauth: {
+          clientId: GROK_OAUTH.clientId,
+          scope: GROK_OAUTH.scope,
+        },
+      };
+    default:
+      return {
+        type: secret.type,
+        accessToken: secret.accessToken ?? null,
+        refreshToken: secret.refreshToken ?? null,
+        expiresAt: secret.expiresAt ?? null,
+      };
+  }
 }
 
 export async function startCodexDesktopOAuth(userId: string) {
@@ -139,6 +411,12 @@ export async function completeCodexDesktopOAuth(input: {
     expires_in?: number;
     id_token?: string;
   };
+  const accountId = chatgptAccountIdFromToken(json.access_token);
+  if (!accountId) {
+    throw new Error(
+      "Codex token missing chatgpt_account_id — reconnect and ensure ChatGPT org access is granted",
+    );
+  }
   const conn = await db.upsertConnection({
     userId: flow.userId,
     provider: "codex",
@@ -151,6 +429,7 @@ export async function completeCodexDesktopOAuth(input: {
       expiresAt: json.expires_in
         ? Date.now() + json.expires_in * 1000
         : undefined,
+      accountId,
       raw: json as unknown as Record<string, unknown>,
     }),
     meta: {
@@ -172,18 +451,24 @@ export async function connectChatGptTokens(
     accountId?: string;
   },
 ) {
+  const accountId =
+    tokens.accountId || chatgptAccountIdFromToken(tokens.accessToken) || undefined;
+  if (!accountId) {
+    throw new Error(
+      "ChatGPT session missing account id — re-run Sign in with ChatGPT",
+    );
+  }
   return await db.upsertConnection({
     userId,
     provider: "chatgpt",
     status: "connected",
-    label: tokens.accountId
-      ? `ChatGPT ${tokens.accountId.slice(0, 8)}`
-      : "ChatGPT via openai-oauth",
+    label: `ChatGPT ${accountId.slice(0, 8)}`,
     encryptedPayload: storeProviderSecret({
       type: "chatgpt_oauth",
       accessToken: tokens.accessToken,
       refreshToken: tokens.refreshToken,
       expiresAt: tokens.expiresAt,
+      accountId,
       raw: tokens as unknown as Record<string, unknown>,
     }),
     meta: {
@@ -196,6 +481,11 @@ export async function connectChatGptTokens(
 export async function connectClaudeSetupToken(userId: string, setupToken: string) {
   const token = setupToken.trim();
   if (!token) throw new Error("Setup token required");
+  if (!token.startsWith("sk-ant-")) {
+    throw new Error(
+      "Expected a Claude Code setup token (sk-ant-oat01-…) from `claude setup-token`",
+    );
+  }
   return await db.upsertConnection({
     userId,
     provider: "claude",
@@ -225,7 +515,7 @@ export async function startGrokDeviceOAuth(userId: string) {
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
       Accept: "application/json",
-      "User-Agent": "FailureAI-OAuth/1.0",
+      "User-Agent": `xai-grok-workspace/${GROK_OAUTH.clientVersion}`,
     },
     body,
   });
@@ -286,7 +576,7 @@ export async function pollGrokDeviceOAuth(input: {
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
       Accept: "application/json",
-      "User-Agent": "FailureAI-OAuth/1.0",
+      "User-Agent": `xai-grok-workspace/${GROK_OAUTH.clientVersion}`,
     },
     body,
   });
@@ -326,7 +616,7 @@ export async function pollGrokDeviceOAuth(input: {
         : undefined,
       raw: json as unknown as Record<string, unknown>,
     }),
-    meta: { method: "device_oauth" },
+    meta: { method: "device_oauth", proxy: GROK_OAUTH.proxyBaseUrl },
   });
   await db.deletePendingFlow(input.flowId);
   return { status: "connected" as const, connection: conn };

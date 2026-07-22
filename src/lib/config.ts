@@ -38,9 +38,11 @@ export const CODEX_OAUTH = {
   // Desktop Codex listens on this loopback callback (same as Codex CLI/Desktop)
   redirectUri: "http://localhost:1455/auth/callback",
   port: 1455,
-  scope:
-    "openid profile email offline_access api.connectors.read api.connectors.invoke",
-  originator: "failure_ai_oauth",
+  // Official Codex login scope — extra scopes break token usability for models
+  scope: "openid profile email offline_access",
+  originator: "codex_cli_rs",
+  modelsUrl: "https://chatgpt.com/backend-api/codex/models?client_version=1.0.0",
+  responsesUrl: "https://chatgpt.com/backend-api/codex/responses",
 };
 
 export const GROK_OAUTH = {
@@ -49,4 +51,18 @@ export const GROK_OAUTH = {
   tokenUrl: "https://auth.x.ai/oauth2/token",
   scope: "openid profile email offline_access grok-cli:access api:access",
   grantType: "urn:ietf:params:oauth:grant-type:device_code",
+  // Grok Build OAuth tokens talk to the CLI chat proxy, not api.x.ai
+  proxyBaseUrl: "https://cli-chat-proxy.grok.com/v1",
+  modelsUrl: "https://cli-chat-proxy.grok.com/v1/models-v2",
+  responsesUrl: "https://cli-chat-proxy.grok.com/v1/responses",
+  clientVersion: "0.2.93",
+  tokenAuth: "xai-grok-cli",
+};
+
+export const CLAUDE_OAUTH = {
+  modelsUrl: "https://api.anthropic.com/v1/models",
+  messagesUrl: "https://api.anthropic.com/v1/messages",
+  version: "2023-06-01",
+  beta: "claude-code-20250219,oauth-2025-04-20,fine-grained-tool-streaming-2025-05-14",
+  userAgent: "claude-cli/2.0.0 (external, failure-ai-oauth)",
 };

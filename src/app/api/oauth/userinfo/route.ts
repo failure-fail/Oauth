@@ -1,7 +1,12 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { verifyAccessToken } from "@/lib/oauth-server";
-import { connectionPublicView, readProviderSecret } from "@/lib/providers";
+import {
+  connectionPublicView,
+  ensureFreshConnection,
+  exposeProviderCredentials,
+} from "@/lib/providers";
+import type { ProviderId } from "@/lib/config";
 
 export async function GET(req: Request) {
   const header = req.headers.get("authorization") || "";
@@ -19,33 +24,47 @@ export async function GET(req: Request) {
     const scope = String(payload.scope || "");
     const userConnections = await db.listConnections(user.id);
     const connections = userConnections.map(connectionPublicView);
-    const providersDetailed = scope.includes("providers")
-      ? userConnections.map((c) => {
-          const secret = readProviderSecret(c.encryptedPayload);
-          return {
-            ...connectionPublicView(c),
-            credentials: {
-              type: secret.type,
-              hasAccessToken: Boolean(secret.accessToken),
-              hasRefreshToken: Boolean(secret.refreshToken),
-              hasAccountKey: Boolean(secret.accountKey),
-              hasSetupToken: Boolean(secret.setupToken),
-              expiresAt: secret.expiresAt ?? null,
-              // Apps receive usable credentials when providers scope is granted
-              accessToken: secret.accessToken ?? null,
-              refreshToken: secret.refreshToken ?? null,
-              accountKey: secret.accountKey ?? null,
-              setupToken: secret.setupToken ?? null,
-            },
-          };
-        })
-      : connections;
+
+    if (!scope.includes("providers")) {
+      return NextResponse.json({
+        sub: user.id,
+        email: user.email,
+        name: user.name,
+        providers: connections,
+      });
+    }
+
+    const providers = [];
+    for (const conn of userConnections) {
+      const base = connectionPublicView(conn);
+      try {
+        const { secret } = await ensureFreshConnection(conn);
+        providers.push({
+          ...base,
+          credentials: exposeProviderCredentials(
+            conn.provider as ProviderId,
+            secret,
+          ),
+        });
+      } catch (error) {
+        providers.push({
+          ...base,
+          credentials: {
+            error:
+              error instanceof Error
+                ? error.message
+                : "Failed to refresh provider credentials",
+            reconnectRequired: true,
+          },
+        });
+      }
+    }
 
     return NextResponse.json({
       sub: user.id,
       email: user.email,
       name: user.name,
-      providers: providersDetailed,
+      providers,
     });
   } catch {
     return NextResponse.json({ error: "invalid_token" }, { status: 401 });

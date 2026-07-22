@@ -79,7 +79,7 @@ curl -X POST https://YOUR_HOST/api/oauth/token \
   -d 'code_verifier=PKCE_VERIFIER'
 ```
 
-UserInfo (with `providers` scope) returns linked Codex / ChatGPT / Claude / Grok credentials for the signed-in user.
+UserInfo (with `providers` scope) returns linked Codex / ChatGPT / Claude / Grok credential packages for the signed-in user. Each package includes refreshed tokens plus the live endpoints and required headers for that provider (Codex/ChatGPT → `chatgpt.com/backend-api/codex`, Claude → Anthropic OAuth headers, Grok → `cli-chat-proxy.grok.com`).
 
 ## Universal UI format
 

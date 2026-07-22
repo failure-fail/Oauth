@@ -26,7 +26,7 @@ export async function GET(req: Request) {
     }
     const models = await listProviderModels({
       provider: body.provider,
-      encryptedPayload: conn.encryptedPayload,
+      connection: conn,
     });
     return NextResponse.json({
       provider: body.provider,

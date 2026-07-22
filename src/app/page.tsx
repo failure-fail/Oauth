@@ -20,7 +20,7 @@ export default function HomePage() {
       </section>
 
       <section className="section">
-        <h2>One identity. Five providers.</h2>
+        <h2>One identity. Four providers.</h2>
         <p>
           Users create a Failure account, connect their AI tools once, and every
           integrated app uses the same Sign in with Failure button.
