@@ -122,21 +122,19 @@ export const COPILOT_OAUTH = {
 };
 
 /**
- * Qwen Code — same public OAuth client as QwenLM/qwen-code.
- * Device flow + PKCE against chat.qwen.ai; API via DashScope compatible-mode.
+ * Kimi Code — same public OAuth client as MoonshotAI/kimi-cli.
+ * Device flow against auth.kimi.com; OpenAI-compatible coding API.
  */
-export const QWEN_OAUTH = {
-  clientId: "f0304373b74a44d2b584a3fb70ca9e56",
-  deviceCodeUrl: "https://chat.qwen.ai/api/v1/oauth2/device/code",
-  tokenUrl: "https://chat.qwen.ai/api/v1/oauth2/token",
-  scope: "openid profile email model.completion",
+export const KIMI_OAUTH = {
+  clientId: "17e5f671-d194-4dfb-9706-5516cb48c098",
+  deviceCodeUrl: "https://auth.kimi.com/api/oauth/device_authorization",
+  tokenUrl: "https://auth.kimi.com/api/oauth/token",
   grantType: "urn:ietf:params:oauth:grant-type:device_code",
-  defaultApiBase: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-  codingPlanApiBase:
-    "https://dashscope.aliyuncs.com/compatible-mode/v1",
-  docsUrl:
-    "https://qwenlm.github.io/qwen-code-docs/en/users/configuration/auth/",
-  userAgent: "QwenCode/0.1.0 (failure-ai-oauth)",
+  apiBase: "https://api.kimi.com/coding/v1",
+  docsUrl: "https://www.kimi.com/code",
+  platform: "kimi_cli",
+  version: "0.28.0",
+  userAgent: "kimi-code-cli/0.28.0",
 };
 
 /**

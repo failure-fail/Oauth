@@ -53,7 +53,7 @@ type MimoFlow = {
   instructions: string[];
 };
 
-type QwenFlow = {
+type KimiFlow = {
   flowId: string;
   deviceCode: string;
   userCode: string;
@@ -69,7 +69,7 @@ const GLYPH: Record<ProviderId, string> = {
   mimo: "米",
   claude: "◆",
   grok: "G",
-  qwen: "Q",
+  kimi: "K",
 };
 
 function ProviderGlyph({ id }: { id: ProviderId }) {
@@ -143,11 +143,11 @@ export function ProvidersConfig({
   const [mimoCode, setMimoCode] = useState("");
   const [mimoApiKey, setMimoApiKey] = useState("");
   const [mimoBaseUrl, setMimoBaseUrl] = useState("");
-  const [qwenFlow, setQwenFlow] = useState<QwenFlow | null>(null);
-  const [qwenPollNote, setQwenPollNote] = useState<string | null>(null);
-  const [qwenChecking, setQwenChecking] = useState(false);
-  const [qwenApiKey, setQwenApiKey] = useState("");
-  const [qwenBaseUrl, setQwenBaseUrl] = useState("");
+  const [kimiFlow, setKimiFlow] = useState<KimiFlow | null>(null);
+  const [kimiPollNote, setKimiPollNote] = useState<string | null>(null);
+  const [kimiChecking, setKimiChecking] = useState(false);
+  const [kimiApiKey, setKimiApiKey] = useState("");
+  const [kimiBaseUrl, setKimiBaseUrl] = useState("");
 
   const byProvider = useMemo(() => {
     const map = new Map<string, Connection>();
@@ -468,11 +468,11 @@ export function ProvidersConfig({
   }
 
   useEffect(() => {
-    if (!qwenFlow) return;
-    const flowId = qwenFlow.flowId;
-    const deviceCode = qwenFlow.deviceCode;
+    if (!kimiFlow) return;
+    const flowId = kimiFlow.flowId;
+    const deviceCode = kimiFlow.deviceCode;
     let cancelled = false;
-    let delayMs = Math.max(5, qwenFlow.interval) * 1000;
+    let delayMs = Math.max(5, kimiFlow.interval) * 1000;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let checks = 0;
     let inFlight = false;
@@ -485,7 +485,7 @@ export function ProvidersConfig({
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            action: "qwen_poll",
+            action: "kimi_poll",
             flowId,
             deviceCode,
           }),
@@ -495,36 +495,36 @@ export function ProvidersConfig({
         checks += 1;
         if (!res.ok) {
           const err =
-            typeof data.error === "string" ? data.error : "Qwen poll failed";
+            typeof data.error === "string" ? data.error : "Kimi poll failed";
           if (/authorization_pending|slow_down/i.test(err)) {
-            setQwenPollNote(`Still waiting for Qwen… (check #${checks})`);
+            setKimiPollNote(`Still waiting for Kimi… (check #${checks})`);
             return "pending" as const;
           }
           setError(err);
-          setQwenFlow(null);
-          setQwenPollNote(null);
+          setKimiFlow(null);
+          setKimiPollNote(null);
           return "done" as const;
         }
         if (data.status === "connected") {
-          setQwenFlow(null);
+          setKimiFlow(null);
           setActive(null);
           setError(null);
-          setQwenPollNote(null);
-          setMessage("Qwen Code connected.");
+          setKimiPollNote(null);
+          setMessage("Kimi Code connected.");
           await refresh();
           return "done" as const;
         }
         if (data.status === "slow_down") {
           delayMs = Math.min(delayMs + 5000, 20000);
-          setQwenPollNote(
-            `Qwen asked us to slow down — retrying (check #${checks})…`,
+          setKimiPollNote(
+            `Kimi asked us to slow down — retrying (check #${checks})…`,
           );
           return "pending" as const;
         }
-        setQwenPollNote(`Waiting for Qwen approval… (check #${checks})`);
+        setKimiPollNote(`Waiting for Kimi approval… (check #${checks})`);
         return "pending" as const;
       } catch (err) {
-        setQwenPollNote(
+        setKimiPollNote(
           err instanceof Error
             ? `Poll error: ${err.message}`
             : "Poll error — retrying…",
@@ -553,52 +553,52 @@ export function ProvidersConfig({
       window.removeEventListener("focus", onResume);
       document.removeEventListener("visibilitychange", onResume);
     };
-  }, [qwenFlow]);
+  }, [kimiFlow]);
 
-  async function checkQwenNow() {
-    if (!qwenFlow || qwenChecking) return;
-    setQwenChecking(true);
+  async function checkKimiNow() {
+    if (!kimiFlow || kimiChecking) return;
+    setKimiChecking(true);
     try {
       const res = await fetch("/api/providers", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          action: "qwen_poll",
-          flowId: qwenFlow.flowId,
-          deviceCode: qwenFlow.deviceCode,
+          action: "kimi_poll",
+          flowId: kimiFlow.flowId,
+          deviceCode: kimiFlow.deviceCode,
         }),
       });
       const data = await res.json();
       if (!res.ok) {
         const err =
-          typeof data.error === "string" ? data.error : "Qwen poll failed";
+          typeof data.error === "string" ? data.error : "Kimi poll failed";
         if (/authorization_pending|slow_down/i.test(err)) {
-          setQwenPollNote(
-            "Qwen still pending — finish authorizing, then check again.",
+          setKimiPollNote(
+            "Kimi still pending — finish authorizing, then check again.",
           );
           return;
         }
         setError(err);
-        setQwenFlow(null);
-        setQwenPollNote(null);
+        setKimiFlow(null);
+        setKimiPollNote(null);
         return;
       }
       if (data.status === "connected") {
-        setQwenFlow(null);
+        setKimiFlow(null);
         setActive(null);
         setError(null);
-        setQwenPollNote(null);
-        setMessage("Qwen Code connected.");
+        setKimiPollNote(null);
+        setMessage("Kimi Code connected.");
         await refresh();
         return;
       }
-      setQwenPollNote(
-        "Qwen still pending — after you authorize, return here and press Check now.",
+      setKimiPollNote(
+        "Kimi still pending — after you authorize, return here and press Check now.",
       );
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Qwen check failed");
+      setError(err instanceof Error ? err.message : "Kimi check failed");
     } finally {
-      setQwenChecking(false);
+      setKimiChecking(false);
     }
   }
 
@@ -1107,9 +1107,9 @@ export function ProvidersConfig({
                 </div>
               )}
 
-              {open && provider.id === "qwen" && (
+              {open && provider.id === "kimi" && (
                 <div className="provider-form">
-                  {!qwenFlow ? (
+                  {!kimiFlow ? (
                     <>
                       <button
                         type="button"
@@ -1117,16 +1117,16 @@ export function ProvidersConfig({
                         disabled={busy}
                         onClick={async () => {
                           if (busy) return;
-                          setQwenPollNote(null);
+                          setKimiPollNote(null);
                           setError(null);
-                          const data = await call({ action: "qwen_start" });
+                          const data = await call({ action: "kimi_start" });
                           if (!data?.deviceCode || !data?.flowId) {
                             setError(
-                              "Qwen start did not return a device code — try again.",
+                              "Kimi start did not return a device code — try again.",
                             );
                             return;
                           }
-                          setQwenFlow({
+                          setKimiFlow({
                             flowId: data.flowId,
                             deviceCode: data.deviceCode,
                             userCode: data.userCode,
@@ -1143,36 +1143,36 @@ export function ProvidersConfig({
                           );
                         }}
                       >
-                        Start Qwen Code OAuth
+                        Start Kimi Code OAuth
                       </button>
                       <p className="muted">
-                        Free OAuth tier ended 2026-04-15. Or paste a DashScope /
-                        Coding Plan API key.
+                        Same device flow as kimi-cli. Or paste an optional API
+                        key.
                       </p>
                       <input
-                        value={qwenApiKey}
-                        onChange={(e) => setQwenApiKey(e.target.value)}
-                        placeholder="Optional: DashScope / Coding Plan API key"
+                        value={kimiApiKey}
+                        onChange={(e) => setKimiApiKey(e.target.value)}
+                        placeholder="Optional: Kimi API key"
                       />
                       <input
-                        value={qwenBaseUrl}
-                        onChange={(e) => setQwenBaseUrl(e.target.value)}
+                        value={kimiBaseUrl}
+                        onChange={(e) => setKimiBaseUrl(e.target.value)}
                         placeholder="Optional API base URL"
                       />
                       <button
                         type="button"
                         className="btn-ghost"
-                        disabled={busy || !qwenApiKey.trim()}
+                        disabled={busy || !kimiApiKey.trim()}
                         onClick={async () => {
                           await call({
-                            action: "qwen_connect",
-                            apiKey: qwenApiKey.trim(),
-                            baseUrl: qwenBaseUrl.trim() || undefined,
+                            action: "kimi_connect",
+                            apiKey: kimiApiKey.trim(),
+                            baseUrl: kimiBaseUrl.trim() || undefined,
                           });
-                          setQwenApiKey("");
-                          setQwenBaseUrl("");
+                          setKimiApiKey("");
+                          setKimiBaseUrl("");
                           setActive(null);
-                          setMessage("Qwen API key connected.");
+                          setMessage("Kimi API key connected.");
                           await refresh();
                         }}
                       >
@@ -1185,28 +1185,28 @@ export function ProvidersConfig({
                         Enter this code at{" "}
                         <a
                           className="text-link"
-                          href={qwenFlow.verificationUri}
+                          href={kimiFlow.verificationUri}
                           target="_blank"
                           rel="noreferrer"
                         >
-                          {qwenFlow.verificationUri}
+                          {kimiFlow.verificationUri}
                         </a>
                       </p>
-                      <p className="user-code">{qwenFlow.userCode}</p>
+                      <p className="user-code">{kimiFlow.userCode}</p>
                       <p className="muted">
-                        Same device flow as Qwen Code CLI. Authorize only this
-                        code, then press Check now.
+                        Same device flow as Kimi Code / kimi-cli. Authorize only
+                        this code, then press Check now.
                       </p>
-                      {qwenPollNote ? (
-                        <p className="muted">{qwenPollNote}</p>
+                      {kimiPollNote ? (
+                        <p className="muted">{kimiPollNote}</p>
                       ) : null}
                       <button
                         type="button"
                         className="btn-primary"
-                        disabled={qwenChecking}
-                        onClick={() => void checkQwenNow()}
+                        disabled={kimiChecking}
+                        onClick={() => void checkKimiNow()}
                       >
-                        {qwenChecking
+                        {kimiChecking
                           ? "Checking…"
                           : "I’ve authorized — Check now"}
                       </button>
@@ -1214,8 +1214,8 @@ export function ProvidersConfig({
                         type="button"
                         className="btn-ghost"
                         onClick={() => {
-                          setQwenFlow(null);
-                          setQwenPollNote(null);
+                          setKimiFlow(null);
+                          setKimiPollNote(null);
                         }}
                       >
                         Cancel

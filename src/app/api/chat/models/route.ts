@@ -13,7 +13,7 @@ const schema = z.object({
     "grok",
     "copilot",
     "mimo",
-    "qwen",
+    "kimi",
   ]),
 });
 

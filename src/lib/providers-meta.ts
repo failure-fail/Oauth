@@ -85,19 +85,18 @@ export const PROVIDERS = [
     risk: null as string | null,
   },
   {
-    id: "qwen",
-    name: "Qwen Code",
+    id: "kimi",
+    name: "Kimi Code",
     short: "Device OAuth",
-    buttonLabel: "Connect Qwen Code",
-    connectedLabel: "Connected to Qwen Code",
+    buttonLabel: "Connect Kimi Code",
+    connectedLabel: "Connected to Kimi Code",
     description:
-      "Qwen Code device OAuth (same client as QwenLM/qwen-code) with DashScope-compatible API. Free OAuth tier ended 2026-04-15 — Coding Plan / API key still work.",
+      "Moonshot Kimi Code device OAuth (same public client as kimi-cli) — tokens talk to api.kimi.com/coding/v1.",
     method: "device_oauth",
-    docsUrl: "https://qwenlm.github.io/qwen-code-docs/en/users/configuration/auth/",
-    accent: "#6a5acd",
-    accentSoft: "rgba(106, 90, 205, 0.16)",
-    risk:
-      "Qwen OAuth free tier was discontinued on 2026-04-15. Prefer Alibaba Cloud Coding Plan or a DashScope API key if OAuth chat is quota-blocked.",
+    docsUrl: "https://www.kimi.com/code",
+    accent: "#f4a261",
+    accentSoft: "rgba(244, 162, 97, 0.16)",
+    risk: null as string | null,
   },
 ] as const;
 

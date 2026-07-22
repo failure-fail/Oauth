@@ -20,7 +20,7 @@ import {
   listCopilotModels,
 } from "./copilot-client";
 import { chatMimo, listMimoModels } from "./mimo-client";
-import { chatQwen, listQwenModels } from "./qwen-client";
+import { chatKimi, listKimiModels } from "./kimi-client";
 import {
   ensureFreshConnection,
   type StoredProviderSecret,
@@ -226,8 +226,8 @@ export async function listProviderModels(input: {
         source: result.source,
       };
     }
-    case "qwen": {
-      const result = await listQwenModels(secret);
+    case "kimi": {
+      const result = await listKimiModels(secret);
       return {
         models: result.models,
         warning: result.warning,
@@ -455,8 +455,8 @@ export async function runProviderChat(input: {
         thinkingLevel: input.thinkingLevel,
         includeThinking: input.includeThinking,
       });
-    case "qwen":
-      return chatQwen(secret, input.prompt, input.model);
+    case "kimi":
+      return chatKimi(secret, input.prompt, input.model);
     default:
       throw new Error("Unsupported provider");
   }

@@ -5,8 +5,8 @@ import {
   CODEX_OAUTH,
   COPILOT_OAUTH,
   GROK_OAUTH,
+  KIMI_OAUTH,
   MIMO_API,
-  QWEN_OAUTH,
   randomToken,
   type ProviderId,
 } from "./config";
@@ -25,13 +25,12 @@ import {
   requestCopilotDeviceCode,
 } from "./copilot-auth";
 import {
-  listQwenModels,
-  normalizeQwenApiBase,
-  pollQwenDeviceCode,
-  qwenCredentialEndpoints,
-  refreshQwenTokens,
-  requestQwenDeviceCode,
-} from "./qwen-client";
+  kimiCredentialEndpoints,
+  listKimiModels,
+  pollKimiDeviceCode,
+  refreshKimiTokens,
+  requestKimiDeviceCode,
+} from "./kimi-client";
 import {
   buildMimoAuthorizeUrl,
   decryptMimoOAuthPayload,
@@ -310,11 +309,14 @@ export async function ensureFreshConnection(
   }
 
   if (
-    conn.provider === "qwen" &&
+    conn.provider === "kimi" &&
     tokenNeedsRefresh(secret) &&
     secret.refreshToken
   ) {
-    const refreshed = await refreshQwenTokens(secret.refreshToken);
+    const refreshed = await refreshKimiTokens(
+      secret.refreshToken,
+      secret.raw?.deviceId as string | undefined,
+    );
     secret = {
       ...secret,
       accessToken: refreshed.accessToken,
@@ -322,23 +324,18 @@ export async function ensureFreshConnection(
       expiresAt: refreshed.expiresAt,
       raw: {
         ...(secret.raw || {}),
-        ...(refreshed.resourceUrl
-          ? { apiBase: normalizeQwenApiBase(refreshed.resourceUrl) }
+        ...(typeof secret.raw?.deviceId === "string"
+          ? { deviceId: secret.raw.deviceId }
           : {}),
       },
     };
     conn = await db.upsertConnection({
       userId: conn.userId,
-      provider: "qwen",
+      provider: "kimi",
       status: conn.status,
       label: conn.label,
       encryptedPayload: storeProviderSecret(secret),
-      meta: {
-        ...(conn.meta || {}),
-        ...(refreshed.resourceUrl
-          ? { apiBase: normalizeQwenApiBase(refreshed.resourceUrl) }
-          : {}),
-      },
+      meta: conn.meta,
     });
   }
 
@@ -615,12 +612,12 @@ export async function exposeProviderCredentials(
           scope: GROK_OAUTH.scope,
         },
       };
-    case "qwen": {
-      let models: Awaited<ReturnType<typeof listQwenModels>>["models"] = [];
+    case "kimi": {
+      let models: Awaited<ReturnType<typeof listKimiModels>>["models"] = [];
       let modelsSource: "live" | "fallback" | "error" | undefined;
       let modelsWarning: string | undefined;
       try {
-        const listed = await listQwenModels(secret);
+        const listed = await listKimiModels(secret);
         models = listed.models;
         modelsSource = listed.source;
         modelsWarning = listed.warning;
@@ -629,12 +626,12 @@ export async function exposeProviderCredentials(
         modelsWarning =
           error instanceof Error
             ? error.message
-            : "Failed to load Qwen models for userinfo";
+            : "Failed to load Kimi models for userinfo";
       }
-      const endpoints = qwenCredentialEndpoints(secret);
+      const endpoints = kimiCredentialEndpoints(secret);
       return {
         type: secret.type,
-        protocol: "qwen_code",
+        protocol: "kimi_code",
         accessToken: secret.accessToken ?? secret.setupToken ?? null,
         refreshToken: secret.refreshToken ?? null,
         expiresAt: secret.expiresAt ?? null,
@@ -646,18 +643,17 @@ export async function exposeProviderCredentials(
         requiredHeaders: {
           Authorization: "Bearer <accessToken>",
           "Content-Type": "application/json",
-          "X-DashScope-AuthType":
-            secret.type === "qwen_api_key" ? "api-key" : "qwen-oauth",
-          "User-Agent": QWEN_OAUTH.userAgent,
+          "User-Agent": KIMI_OAUTH.userAgent,
+          "X-Msh-Platform": KIMI_OAUTH.platform,
+          "X-Msh-Version": KIMI_OAUTH.version,
         },
         oauth: {
-          clientId: QWEN_OAUTH.clientId,
-          scope: QWEN_OAUTH.scope,
-          tokenUrl: QWEN_OAUTH.tokenUrl,
+          clientId: KIMI_OAUTH.clientId,
+          tokenUrl: KIMI_OAUTH.tokenUrl,
         },
-        docs: QWEN_OAUTH.docsUrl,
+        docs: KIMI_OAUTH.docsUrl,
         note:
-          "OpenAI-compatible DashScope endpoint. OAuth free tier ended 2026-04-15; Coding Plan / API keys still work. resource_url from token may override api base.",
+          "Moonshot Kimi Code device OAuth (same public client as kimi-cli). OpenAI-compatible coding API at api.kimi.com/coding/v1.",
       };
     }
     case "copilot": {
@@ -1508,17 +1504,17 @@ export async function connectMimoApiKey(
   });
 }
 
-export async function startQwenDeviceOAuth(userId: string) {
-  const auth = await requestQwenDeviceCode();
+export async function startKimiDeviceOAuth(userId: string) {
+  const auth = await requestKimiDeviceCode();
   const flowId = randomUUID();
   await db.savePendingFlow({
     id: flowId,
     userId,
-    provider: "qwen",
+    provider: "kimi",
     encryptedState: encryptSecret(
       JSON.stringify({
         deviceCode: auth.deviceCode,
-        codeVerifier: auth.codeVerifier,
+        deviceId: auth.deviceId,
         userCode: auth.userCode,
         interval: auth.interval,
       }),
@@ -1536,30 +1532,30 @@ export async function startQwenDeviceOAuth(userId: string) {
   };
 }
 
-export async function pollQwenDeviceOAuth(input: {
+export async function pollKimiDeviceOAuth(input: {
   userId: string;
   flowId: string;
   deviceCode?: string;
 }) {
-  const existing = await db.getConnection(input.userId, "qwen");
+  const existing = await db.getConnection(input.userId, "kimi");
   if (existing?.status === "connected") {
     await db.deletePendingFlow(input.flowId).catch(() => undefined);
     return { status: "connected" as const, connection: existing };
   }
 
   const flow = await db.getPendingFlow(input.flowId, input.userId);
-  if (!flow || flow.provider !== "qwen") {
-    throw new Error("Qwen flow not found or expired — start OAuth again");
+  if (!flow || flow.provider !== "kimi") {
+    throw new Error("Kimi flow not found or expired — start OAuth again");
   }
   const state = JSON.parse(decryptSecret(flow.encryptedState)) as {
     deviceCode: string;
-    codeVerifier: string;
+    deviceId?: string;
     interval?: number;
   };
   const deviceCode = input.deviceCode?.trim() || state.deviceCode;
-  const polled = await pollQwenDeviceCode({
+  const polled = await pollKimiDeviceCode({
     deviceCode,
-    codeVerifier: state.codeVerifier,
+    deviceId: state.deviceId,
     interval: state.interval,
   });
   if (polled.status === "pending" || polled.status === "slow_down") {
@@ -1569,71 +1565,73 @@ export async function pollQwenDeviceOAuth(input: {
     throw new Error(polled.error);
   }
 
-  const apiBase = normalizeQwenApiBase(polled.resourceUrl);
   const conn = await db.upsertConnection({
     userId: input.userId,
-    provider: "qwen",
+    provider: "kimi",
     status: "connected",
-    label: "Qwen Code",
+    label: "Kimi Code",
     encryptedPayload: storeProviderSecret({
-      type: "qwen_code_oauth",
+      type: "kimi_code_oauth",
       accessToken: polled.accessToken,
       refreshToken: polled.refreshToken,
       expiresAt: polled.expiresIn
         ? Date.now() + polled.expiresIn * 1000
         : undefined,
-      raw: { apiBase, resourceUrl: polled.resourceUrl },
+      raw: {
+        apiBase: KIMI_OAUTH.apiBase,
+        ...(state.deviceId ? { deviceId: state.deviceId } : {}),
+      },
     }),
     meta: {
       method: "device_oauth",
-      apiBase,
-      warning:
-        "Qwen OAuth free tier ended 2026-04-15. If chat is quota-blocked, connect a Coding Plan / DashScope API key instead.",
+      apiBase: KIMI_OAUTH.apiBase,
     },
   });
   await db.deletePendingFlow(input.flowId);
   return { status: "connected" as const, connection: conn };
 }
 
-export async function connectQwenApiKey(
+export async function connectKimiApiKey(
   userId: string,
   apiKey: string,
   baseUrl?: string,
 ) {
   const key = apiKey.trim();
-  if (!key) throw new Error("Qwen API key required");
-  const resolvedBase = normalizeQwenApiBase(
-    baseUrl?.trim() || QWEN_OAUTH.defaultApiBase,
+  if (!key) throw new Error("Kimi API key required");
+  const resolvedBase = (baseUrl?.trim() || KIMI_OAUTH.apiBase).replace(
+    /\/$/,
+    "",
   );
   const probe = await fetch(`${resolvedBase}/models`, {
     headers: {
       Authorization: `Bearer ${key}`,
       Accept: "application/json",
-      "X-DashScope-AuthType": "api-key",
-      "User-Agent": QWEN_OAUTH.userAgent,
+      "User-Agent": KIMI_OAUTH.userAgent,
+      "X-Msh-Platform": KIMI_OAUTH.platform,
+      "X-Msh-Version": KIMI_OAUTH.version,
     },
   });
   if (!probe.ok) {
     const text = await probe.text();
     throw new Error(
-      `Qwen key rejected (${probe.status}): ${text.slice(0, 200)}`,
+      `Kimi key rejected (${probe.status}): ${text.slice(0, 200)}`,
     );
   }
 
   return await db.upsertConnection({
     userId,
-    provider: "qwen",
+    provider: "kimi",
     status: "connected",
-    label: "Qwen API key",
+    label: "Kimi API key",
     encryptedPayload: storeProviderSecret({
-      type: "qwen_api_key",
+      type: "kimi_api_key",
       accessToken: key,
       setupToken: key,
       raw: { apiBase: resolvedBase },
     }),
     meta: {
       method: "api_key",
-      source: QWEN_OAUTH.docsUrl,
+      source: KIMI_OAUTH.docsUrl,
       apiBase: resolvedBase,
     },
   });

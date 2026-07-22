@@ -10,16 +10,16 @@ import {
   startAntigravityOAuth,
   connectClaudeSetupToken,
   connectMimoApiKey,
-  connectQwenApiKey,
+  connectKimiApiKey,
   connectionPublicView,
   pollCopilotDeviceOAuth,
   pollGrokDeviceOAuth,
-  pollQwenDeviceOAuth,
+  pollKimiDeviceOAuth,
   startCodexDesktopOAuth,
   startCopilotDeviceOAuth,
   startGrokDeviceOAuth,
   startMimoOAuth,
-  startQwenDeviceOAuth,
+  startKimiDeviceOAuth,
 } from "@/lib/providers";
 
 export async function GET() {
@@ -43,7 +43,7 @@ const providerEnum = z.enum([
   "mimo",
   "claude",
   "grok",
-  "qwen",
+  "kimi",
 ]);
 
 const actionSchema = z.discriminatedUnion("action", [
@@ -97,15 +97,15 @@ const actionSchema = z.discriminatedUnion("action", [
     flowId: z.string(),
   }),
   z.object({
-    action: z.literal("qwen_start"),
+    action: z.literal("kimi_start"),
   }),
   z.object({
-    action: z.literal("qwen_poll"),
+    action: z.literal("kimi_poll"),
     flowId: z.string(),
     deviceCode: z.string().min(1).optional(),
   }),
   z.object({
-    action: z.literal("qwen_connect"),
+    action: z.literal("kimi_connect"),
     apiKey: z.string().min(1),
     baseUrl: z.string().url().optional(),
   }),
@@ -200,12 +200,12 @@ export async function POST(req: Request) {
         });
         return NextResponse.json(result);
       }
-      case "qwen_start": {
-        const flow = await startQwenDeviceOAuth(user.id);
+      case "kimi_start": {
+        const flow = await startKimiDeviceOAuth(user.id);
         return NextResponse.json(flow);
       }
-      case "qwen_poll": {
-        const result = await pollQwenDeviceOAuth({
+      case "kimi_poll": {
+        const result = await pollKimiDeviceOAuth({
           userId: user.id,
           flowId: body.flowId,
           deviceCode: body.deviceCode,
@@ -218,8 +218,8 @@ export async function POST(req: Request) {
         }
         return NextResponse.json(result);
       }
-      case "qwen_connect": {
-        const conn = await connectQwenApiKey(
+      case "kimi_connect": {
+        const conn = await connectKimiApiKey(
           user.id,
           body.apiKey,
           body.baseUrl,

@@ -12,7 +12,7 @@ Universal **PKCE OAuth** that any app can integrate. Users sign up with email an
 | **Xiaomi MiMo** | Platform OAuth (`platform.xiaomimimo.com`, same as MiMo Code CLI) |
 | **Claude Code** | `claude setup-token` — **risk of account deletion** (Anthropic ToS) |
 | **Grok Build** | Grok Build / xAI device-code OAuth |
-| **Qwen Code** | Device OAuth + PKCE (same as QwenLM/qwen-code) or DashScope API key |
+| **Kimi Code** | Device OAuth (same public client as MoonshotAI/kimi-cli) or API key |
 
 ## Quick start
 
