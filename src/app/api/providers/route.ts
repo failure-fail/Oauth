@@ -83,6 +83,7 @@ const actionSchema = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("copilot_poll"),
     flowId: z.string(),
+    deviceCode: z.string().min(1).optional(),
   }),
   z.object({
     action: z.literal("grok_start"),
@@ -161,7 +162,14 @@ export async function POST(req: Request) {
         const result = await pollCopilotDeviceOAuth({
           userId: user.id,
           flowId: body.flowId,
+          deviceCode: body.deviceCode,
         });
+        if (result.status === "connected") {
+          return NextResponse.json({
+            status: "connected",
+            connection: connectionPublicView(result.connection),
+          });
+        }
         return NextResponse.json(result);
       }
       case "grok_start": {

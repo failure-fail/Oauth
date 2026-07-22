@@ -39,6 +39,7 @@ type GrokFlow = {
 
 type CopilotFlow = {
   flowId: string;
+  deviceCode: string;
   userCode: string;
   verificationUri: string;
   verificationUriComplete?: string;
@@ -255,12 +256,16 @@ export function ProvidersConfig({
   useEffect(() => {
     if (!copilotFlow) return;
     const flowId = copilotFlow.flowId;
+    const deviceCode = copilotFlow.deviceCode;
     let cancelled = false;
-    let delayMs = Math.max(2, copilotFlow.interval) * 1000;
+    let delayMs = Math.max(5, copilotFlow.interval) * 1000;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let checks = 0;
+    let inFlight = false;
 
     async function pollOnce(manual = false) {
+      if (inFlight) return "pending" as const;
+      inFlight = true;
       if (manual) setCopilotChecking(true);
       try {
         const res = await fetch("/api/providers", {
@@ -269,6 +274,7 @@ export function ProvidersConfig({
           body: JSON.stringify({
             action: "copilot_poll",
             flowId,
+            deviceCode,
           }),
         });
         const data = await res.json();
@@ -282,6 +288,26 @@ export function ProvidersConfig({
               `Still waiting for GitHub… (check #${checks})`,
             );
             return "pending" as const;
+          }
+          // A parallel poll may have already connected this account.
+          if (/incorrect_device_code|expired_token/i.test(err)) {
+            const probe = await fetch("/api/providers");
+            if (probe.ok) {
+              const list = await probe.json();
+              const connected = (list.connections || []).some(
+                (c: Connection) =>
+                  c.provider === "copilot" && c.status === "connected",
+              );
+              if (connected) {
+                setCopilotFlow(null);
+                setActive(null);
+                setError(null);
+                setCopilotPollNote(null);
+                setMessage("GitHub Copilot connected.");
+                setConnections(list.connections);
+                return "done" as const;
+              }
+            }
           }
           setError(err);
           setCopilotFlow(null);
@@ -298,11 +324,14 @@ export function ProvidersConfig({
           return "done" as const;
         }
         if (data.status === "slow_down") {
-          delayMs = Math.min(delayMs + 3000, 20000);
+          delayMs = Math.min(delayMs + 5000, 20000);
           setCopilotPollNote(
             `GitHub asked us to slow down — retrying (check #${checks})…`,
           );
           return "pending" as const;
+        }
+        if (typeof data.interval === "number" && data.interval > 0) {
+          delayMs = Math.max(delayMs, data.interval * 1000);
         }
         setCopilotPollNote(
           `Waiting for GitHub approval… (check #${checks})`,
@@ -316,6 +345,7 @@ export function ProvidersConfig({
         );
         return "pending" as const;
       } finally {
+        inFlight = false;
         if (manual) setCopilotChecking(false);
       }
     }
@@ -326,7 +356,9 @@ export function ProvidersConfig({
       timer = setTimeout(loop, delayMs);
     }
 
-    void loop();
+    // Respect GitHub's interval — do not poll immediately (causes slow_down
+    // / races that redeem the device code before the success path finishes).
+    timer = setTimeout(loop, delayMs);
     const onResume = () => {
       if (document.visibilityState === "visible") void pollOnce();
     };
@@ -343,6 +375,7 @@ export function ProvidersConfig({
   async function checkCopilotNow() {
     if (!copilotFlow || copilotChecking) return;
     const flowId = copilotFlow.flowId;
+    const deviceCode = copilotFlow.deviceCode;
     setCopilotChecking(true);
     try {
       const res = await fetch("/api/providers", {
@@ -351,19 +384,41 @@ export function ProvidersConfig({
         body: JSON.stringify({
           action: "copilot_poll",
           flowId,
+          deviceCode,
         }),
       });
       const data = await res.json();
       if (!res.ok) {
         const err =
           typeof data.error === "string" ? data.error : "Copilot poll failed";
-        if (!/authorization_pending|slow_down/i.test(err)) {
-          setError(err);
-          setCopilotFlow(null);
-          setCopilotPollNote(null);
-        } else {
-          setCopilotPollNote("GitHub still pending — finish authorizing, then check again.");
+        if (/authorization_pending|slow_down/i.test(err)) {
+          setCopilotPollNote(
+            "GitHub still pending — finish authorizing, then check again.",
+          );
+          return;
         }
+        if (/incorrect_device_code|expired_token/i.test(err)) {
+          const probe = await fetch("/api/providers");
+          if (probe.ok) {
+            const list = await probe.json();
+            const connected = (list.connections || []).some(
+              (c: Connection) =>
+                c.provider === "copilot" && c.status === "connected",
+            );
+            if (connected) {
+              setCopilotFlow(null);
+              setActive(null);
+              setError(null);
+              setCopilotPollNote(null);
+              setMessage("GitHub Copilot connected.");
+              setConnections(list.connections);
+              return;
+            }
+          }
+        }
+        setError(err);
+        setCopilotFlow(null);
+        setCopilotPollNote(null);
         return;
       }
       if (data.status === "connected") {
@@ -633,14 +688,28 @@ export function ProvidersConfig({
                       className="btn-primary"
                       disabled={busy}
                       onClick={async () => {
+                        if (busy) return;
                         setCopilotPollNote(null);
                         setError(null);
                         const data = await call({ action: "copilot_start" });
-                        setCopilotFlow(data);
+                        if (!data?.deviceCode || !data?.flowId) {
+                          setError(
+                            "Copilot start did not return a device code — try again.",
+                          );
+                          return;
+                        }
+                        setCopilotFlow({
+                          flowId: data.flowId,
+                          deviceCode: data.deviceCode,
+                          userCode: data.userCode,
+                          verificationUri: data.verificationUri,
+                          verificationUriComplete: data.verificationUriComplete,
+                          interval: data.interval ?? 5,
+                        });
                         window.open(
                           data.verificationUriComplete || data.verificationUri,
                           "_blank",
-                          "noopener",
+                          "noopener,noreferrer",
                         );
                       }}
                     >
@@ -661,8 +730,9 @@ export function ProvidersConfig({
                       </p>
                       <p className="user-code">{copilotFlow.userCode}</p>
                       <p className="muted">
-                        After GitHub shows “authorized”, return to this tab.
-                        Background tabs throttle polling — use Check now.
+                        Authorize only this code. Do not click Start again —
+                        that creates a new code and the old authorize page will
+                        never verify. After GitHub confirms, press Check now.
                       </p>
                       {copilotPollNote ? (
                         <p className="muted">{copilotPollNote}</p>
@@ -676,6 +746,16 @@ export function ProvidersConfig({
                         {copilotChecking
                           ? "Checking…"
                           : "I’ve authorized — Check now"}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-ghost"
+                        onClick={() => {
+                          setCopilotFlow(null);
+                          setCopilotPollNote(null);
+                        }}
+                      >
+                        Cancel
                       </button>
                     </>
                   )}

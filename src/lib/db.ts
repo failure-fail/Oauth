@@ -89,11 +89,17 @@ const emptyDb = (): Database => ({
 });
 
 const STORE_KEY = "failure-oauth:store";
+const FLOW_KEY = (id: string) => `failure-oauth:flow:${id}`;
 const KNOWN_PROVIDERS = new Set<string>(PROVIDERS.map((p) => p.id));
 
 type KvLike = {
   get: (key: string) => Promise<string | null>;
-  put: (key: string, value: string) => Promise<void>;
+  put: (
+    key: string,
+    value: string,
+    options?: { expirationTtl?: number },
+  ) => Promise<void>;
+  delete?: (key: string) => Promise<void>;
 };
 
 let memoryFallback: Database | null = null;
@@ -402,16 +408,50 @@ export const db = {
     });
   },
 
+  /**
+   * Pending OAuth flows live in per-id KV keys so they are not lost to
+   * read-modify-write races on the monolith store (which previously made
+   * device-code polls look forever-pending or "flow not found").
+   */
   async savePendingFlow(flow: PendingProviderFlow) {
+    const kv = await getKv();
+    if (kv) {
+      const ttlSec = Math.max(
+        60,
+        Math.ceil((flow.expiresAt - Date.now()) / 1000),
+      );
+      await kv.put(FLOW_KEY(flow.id), JSON.stringify(flow), {
+        expirationTtl: ttlSec,
+      });
+      return;
+    }
     await mutate((store) => {
       store.pendingFlows = store.pendingFlows.filter(
-        (f) => f.expiresAt > Date.now(),
+        (f) =>
+          f.expiresAt > Date.now() &&
+          !(f.userId === flow.userId && f.provider === flow.provider),
       );
       store.pendingFlows.push(flow);
     });
   },
 
   async getPendingFlow(id: string, userId: string) {
+    const kv = await getKv();
+    if (kv) {
+      const raw = await kv.get(FLOW_KEY(id));
+      if (raw) {
+        const flow = JSON.parse(raw) as PendingProviderFlow;
+        if (
+          flow.userId === userId &&
+          flow.expiresAt > Date.now() &&
+          isKnownProvider(flow.provider)
+        ) {
+          return flow;
+        }
+        return null;
+      }
+      // Fall through for legacy monolith-stored flows.
+    }
     const store = await readDb();
     const flow = store.pendingFlows.find(
       (f) => f.id === id && f.userId === userId,
@@ -421,6 +461,21 @@ export const db = {
   },
 
   async getPendingFlowByBridgeToken(flowId: string, bridgeToken: string) {
+    const kv = await getKv();
+    if (kv) {
+      const raw = await kv.get(FLOW_KEY(flowId));
+      if (raw) {
+        const flow = JSON.parse(raw) as PendingProviderFlow;
+        if (
+          flow.bridgeToken === bridgeToken &&
+          flow.expiresAt > Date.now() &&
+          isKnownProvider(flow.provider)
+        ) {
+          return flow;
+        }
+        return null;
+      }
+    }
     const store = await readDb();
     const flow = store.pendingFlows.find(
       (f) =>
@@ -432,6 +487,25 @@ export const db = {
   },
 
   async deletePendingFlow(id: string) {
+    const kv = await getKv();
+    if (kv) {
+      if (kv.delete) {
+        await kv.delete(FLOW_KEY(id));
+      } else {
+        await kv.put(
+          FLOW_KEY(id),
+          JSON.stringify({
+            id,
+            userId: "",
+            provider: "copilot",
+            encryptedState: "",
+            expiresAt: 0,
+          } satisfies PendingProviderFlow),
+          { expirationTtl: 60 },
+        );
+      }
+      return;
+    }
     await mutate((store) => {
       store.pendingFlows = store.pendingFlows.filter((f) => f.id !== id);
     });

@@ -1148,6 +1148,33 @@ export async function pollGrokDeviceOAuth(input: {
   return { status: "connected" as const, connection: conn };
 }
 
+function parseGithubOAuthTokenResponse(text: string): {
+  error?: string;
+  error_description?: string;
+  access_token?: string;
+  interval?: number;
+} {
+  const trimmed = text.trim();
+  if (!trimmed) return {};
+  if (trimmed.startsWith("{")) {
+    return JSON.parse(trimmed) as {
+      error?: string;
+      error_description?: string;
+      access_token?: string;
+      interval?: number;
+    };
+  }
+  // Some GitHub OAuth responses are still form-encoded despite Accept: json.
+  const params = new URLSearchParams(trimmed);
+  const intervalRaw = params.get("interval");
+  return {
+    error: params.get("error") || undefined,
+    error_description: params.get("error_description") || undefined,
+    access_token: params.get("access_token") || undefined,
+    interval: intervalRaw ? Number(intervalRaw) : undefined,
+  };
+}
+
 export async function startCopilotDeviceOAuth(userId: string) {
   const body = new URLSearchParams({
     client_id: COPILOT_OAUTH.clientId,
@@ -1174,7 +1201,11 @@ export async function startCopilotDeviceOAuth(userId: string) {
     expires_in: number;
     interval?: number;
   };
+  if (!json.device_code || !json.user_code) {
+    throw new Error("GitHub device code response missing codes");
+  }
   const flowId = randomUUID();
+  const interval = json.interval ?? 5;
   await db.savePendingFlow({
     id: flowId,
     userId,
@@ -1182,37 +1213,56 @@ export async function startCopilotDeviceOAuth(userId: string) {
     encryptedState: encryptSecret(
       JSON.stringify({
         deviceCode: json.device_code,
-        interval: json.interval ?? 5,
+        userCode: json.user_code,
+        interval,
       }),
     ),
     expiresAt: Date.now() + json.expires_in * 1000,
   });
   return {
     flowId,
+    // Returned so the browser polls the exact code shown / opened — avoids
+    // KV lag or a second Start overwriting the server flow while the user
+    // authorizes an older GitHub tab.
+    deviceCode: json.device_code,
     userCode: json.user_code,
     verificationUri: json.verification_uri,
     verificationUriComplete: json.verification_uri_complete,
     expiresIn: json.expires_in,
-    interval: json.interval ?? 5,
+    interval,
   };
 }
 
 export async function pollCopilotDeviceOAuth(input: {
   userId: string;
   flowId: string;
+  deviceCode?: string;
 }) {
-  const flow = await db.getPendingFlow(input.flowId, input.userId);
-  if (!flow || flow.provider !== "copilot") {
-    throw new Error("Copilot flow not found or expired");
+  const existing = await db.getConnection(input.userId, "copilot");
+  if (existing?.status === "connected") {
+    await db.deletePendingFlow(input.flowId).catch(() => undefined);
+    return { status: "connected" as const, connection: existing };
   }
-  const state = JSON.parse(decryptSecret(flow.encryptedState)) as {
-    deviceCode: string;
-    interval: number;
-  };
+
+  const flow = await db.getPendingFlow(input.flowId, input.userId);
+  let deviceCode = input.deviceCode?.trim() || "";
+  let interval = 5;
+  if (flow && flow.provider === "copilot") {
+    const state = JSON.parse(decryptSecret(flow.encryptedState)) as {
+      deviceCode: string;
+      interval?: number;
+    };
+    interval = state.interval ?? 5;
+    // Prefer the device code the UI is displaying; fall back to stored.
+    if (!deviceCode) deviceCode = state.deviceCode;
+  } else if (!deviceCode) {
+    throw new Error("Copilot flow not found or expired — start OAuth again");
+  }
+
   const body = new URLSearchParams({
     grant_type: "urn:ietf:params:oauth:grant-type:device_code",
     client_id: COPILOT_OAUTH.clientId,
-    device_code: state.deviceCode,
+    device_code: deviceCode,
   });
   const res = await fetch(COPILOT_OAUTH.accessTokenUrl, {
     method: "POST",
@@ -1229,12 +1279,12 @@ export async function pollCopilotDeviceOAuth(input: {
     error_description?: string;
     access_token?: string;
     interval?: number;
-  } = {};
+  };
   try {
-    json = JSON.parse(text) as typeof json;
+    json = parseGithubOAuthTokenResponse(text);
   } catch {
     throw new Error(
-      `Copilot poll returned non-JSON (${res.status}): ${text.slice(0, 200)}`,
+      `Copilot poll returned unreadable body (${res.status}): ${text.slice(0, 200)}`,
     );
   }
   if (!res.ok || json.error) {
@@ -1244,8 +1294,18 @@ export async function pollCopilotDeviceOAuth(input: {
     ) {
       return {
         status: json.error as "authorization_pending" | "slow_down",
-        interval: json.interval || state.interval,
+        interval: json.interval || interval,
       };
+    }
+    // Concurrent polls: first redeem wins; later ones should not wipe UX.
+    if (
+      json.error === "incorrect_device_code" ||
+      json.error === "expired_token"
+    ) {
+      const again = await db.getConnection(input.userId, "copilot");
+      if (again?.status === "connected") {
+        return { status: "connected" as const, connection: again };
+      }
     }
     throw new Error(
       json.error_description ||
@@ -1259,7 +1319,6 @@ export async function pollCopilotDeviceOAuth(input: {
   try {
     session = await exchangeCopilotSession(json.access_token);
   } catch (error) {
-    await db.deletePendingFlow(input.flowId);
     throw new Error(
       error instanceof Error
         ? `GitHub authorized, but Copilot session exchange failed: ${error.message}. Confirm the account has an active Copilot subscription.`
