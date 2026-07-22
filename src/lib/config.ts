@@ -99,3 +99,42 @@ export const CLAUDE_OAUTH = {
   beta: "claude-code-20250219,oauth-2025-04-20,fine-grained-tool-streaming-2025-05-14",
   userAgent: "claude-cli/2.0.0 (external, failure-ai-oauth)",
 };
+
+/** GitHub Copilot — same public GitHub App as VS Code / Copilot Chat. */
+export const COPILOT_OAUTH = {
+  clientId: "Iv1.b507a08c87ecfe98",
+  deviceCodeUrl: "https://github.com/login/device/code",
+  accessTokenUrl: "https://github.com/login/oauth/access_token",
+  sessionTokenUrl: "https://api.github.com/copilot_internal/v2/token",
+  scope: "read:user",
+  defaultApiBase: "https://api.individual.githubcopilot.com",
+  headers: {
+    "User-Agent": "GitHubCopilotChat/0.35.0",
+    "Editor-Version": "vscode/1.107.0",
+    "Editor-Plugin-Version": "copilot-chat/0.35.0",
+    "Copilot-Integration-Id": "vscode-chat",
+  },
+};
+
+/** Mistral AI platform (console.mistral.ai / Le Chat / Vibe keys). */
+export const MISTRAL_API = {
+  baseUrl: "https://api.mistral.ai/v1",
+  modelsUrl: "https://api.mistral.ai/v1/models",
+  chatUrl: "https://api.mistral.ai/v1/chat/completions",
+  docsUrl: "https://docs.mistral.ai/",
+  consoleUrl: "https://console.mistral.ai/",
+};
+
+/**
+ * Xiaomi MiMo API Open Platform.
+ * Pay-as-you-go: sk-… @ api.xiaomimimo.com
+ * Token Plan: tp-… @ token-plan-cn.xiaomimimo.com (or the URL shown in console)
+ */
+export const MIMO_API = {
+  paygBaseUrl: "https://api.xiaomimimo.com/v1",
+  tokenPlanBaseUrl: "https://token-plan-cn.xiaomimimo.com/v1",
+  anthropicPaygBaseUrl: "https://api.xiaomimimo.com/anthropic",
+  docsUrl:
+    "https://mimo.mi.com/docs/en-US/quick-start/summary/first-api-call",
+  consoleUrl: "https://platform.xiaomimimo.com/",
+};

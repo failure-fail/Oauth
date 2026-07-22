@@ -96,16 +96,20 @@ export function ChatPanel({
     !isImageModel &&
     (provider === "codex" ||
       provider === "antigravity" ||
-      provider === "claude") &&
+      provider === "claude" ||
+      provider === "mimo") &&
     Boolean(
       selectedModel?.reasoningLevels?.length ||
         provider === "claude" ||
-        provider === "antigravity",
+        provider === "antigravity" ||
+        provider === "mimo",
     );
 
   const thinkingOptions = selectedModel?.reasoningLevels?.length
     ? selectedModel.reasoningLevels
-    : provider === "claude" || provider === "antigravity"
+    : provider === "claude" ||
+        provider === "antigravity" ||
+        provider === "mimo"
       ? (["none", "low", "medium", "high"] as ThinkingLevel[])
       : (["low", "medium", "high", "xhigh"] as ThinkingLevel[]);
 

@@ -6,6 +6,9 @@ import { PROVIDERS } from "@/lib/providers-meta";
 const GLYPH: Record<string, string> = {
   codex: "C",
   antigravity: "A",
+  copilot: "GH",
+  mistral: "M",
+  mimo: "米",
   claude: "◆",
   grok: "G",
 };
@@ -19,9 +22,9 @@ export default function HomePage() {
         <p className="brand-hero">Failure</p>
         <h1 className="hero-title">One OAuth for every AI app.</h1>
         <p className="hero-lede">
-          Users connect Codex, Antigravity, Claude Code, and Grok Build once.
-          Your app gets PKCE tokens, live models, thinking levels, and provider
-          credentials.
+          Users connect Codex, Antigravity, GitHub Copilot, Mistral, Xiaomi MiMo,
+          Claude Code, and Grok Build once. Your app gets PKCE tokens, live
+          models, thinking levels, and provider credentials.
         </p>
         <div className="hero-cta">
           <SignInWithFailure href="/signup" />
@@ -35,9 +38,9 @@ export default function HomePage() {
         <p className="eyebrow">What ships</p>
         <h2 className="section-title">Identity in, providers out.</h2>
         <p className="section-copy">
-          Failure is the authorization server. Apps never re-implement four
-          OAuth dances — they ask for `providers` scope and receive usable
-          credential packages.
+          Failure is the authorization server. Apps never re-implement every
+          provider OAuth dance — they ask for `providers` scope and receive
+          usable credential packages.
         </p>
         <div className="rail">
           {PROVIDERS.map((provider) => (

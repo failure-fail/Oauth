@@ -3,7 +3,10 @@ import {
   ANTIGRAVITY_OAUTH,
   CLAUDE_OAUTH,
   CODEX_OAUTH,
+  COPILOT_OAUTH,
   GROK_OAUTH,
+  MIMO_API,
+  MISTRAL_API,
   randomToken,
   type ProviderId,
 } from "./config";
@@ -11,6 +14,21 @@ import { encryptSecret, decryptSecret, pkceChallengeFromVerifier } from "./crypt
 import { db, type ProviderConnection } from "./db";
 import { antigravityCredentialEndpoints, listAntigravityModels } from "./antigravity-client";
 import { listCodexModels } from "./codex-client";
+import {
+  copilotCredentialEndpoints,
+  exchangeCopilotSession,
+  listCopilotModels,
+  refreshCopilotSession,
+} from "./copilot-client";
+import {
+  listMistralModels,
+  mistralCredentialEndpoints,
+} from "./mistral-client";
+import {
+  listMimoModels,
+  mimoCredentialEndpoints,
+  resolveMimoBaseUrl,
+} from "./mimo-client";
 
 export type StoredProviderSecret = {
   type: string;
@@ -278,6 +296,23 @@ export async function ensureFreshConnection(
     });
   }
 
+  if (
+    conn.provider === "copilot" &&
+    tokenNeedsRefresh(secret) &&
+    secret.refreshToken
+  ) {
+    const refreshed = await refreshCopilotSession(secret);
+    secret = refreshed;
+    conn = await db.upsertConnection({
+      userId: conn.userId,
+      provider: "copilot",
+      status: conn.status,
+      label: conn.label,
+      encryptedPayload: storeProviderSecret(secret),
+      meta: conn.meta,
+    });
+  }
+
   // Normalize OpenAI account id onto the secret for Codex callers
   if (
     conn.provider === "codex" &&
@@ -534,6 +569,133 @@ export async function exposeProviderCredentials(
           scope: GROK_OAUTH.scope,
         },
       };
+    case "copilot": {
+      let models: Awaited<ReturnType<typeof listCopilotModels>>["models"] = [];
+      let modelsSource: "live" | "fallback" | "error" | undefined;
+      let modelsWarning: string | undefined;
+      try {
+        const listed = await listCopilotModels(secret);
+        models = listed.models;
+        modelsSource = listed.source;
+        modelsWarning = listed.warning;
+      } catch (error) {
+        modelsSource = "error";
+        modelsWarning =
+          error instanceof Error
+            ? error.message
+            : "Failed to load Copilot models for userinfo";
+      }
+      const endpoints = copilotCredentialEndpoints(secret);
+      return {
+        type: secret.type,
+        protocol: "github_copilot",
+        accessToken: secret.accessToken ?? null,
+        refreshToken: secret.refreshToken ?? null,
+        expiresAt: secret.expiresAt ?? null,
+        models,
+        modelsSource: modelsSource ?? null,
+        modelsWarning: modelsWarning ?? null,
+        capabilities: {
+          chat: true,
+          streamingRequired: true,
+        },
+        endpoints,
+        requiredHeaders: {
+          Authorization: "Bearer <accessToken>",
+          ...COPILOT_OAUTH.headers,
+        },
+        oauth: {
+          clientId: COPILOT_OAUTH.clientId,
+          scope: COPILOT_OAUTH.scope,
+          sessionTokenUrl: COPILOT_OAUTH.sessionTokenUrl,
+        },
+        note:
+          "accessToken is the short-lived Copilot session token (tid=…). refreshToken is the GitHub ghu_ token — refresh by GET sessionTokenUrl with Bearer refreshToken.",
+      };
+    }
+    case "mistral": {
+      let models: Awaited<ReturnType<typeof listMistralModels>>["models"] = [];
+      let modelsSource: "live" | "fallback" | "error" | undefined;
+      let modelsWarning: string | undefined;
+      try {
+        const listed = await listMistralModels(secret);
+        models = listed.models;
+        modelsSource = listed.source;
+        modelsWarning = listed.warning;
+      } catch (error) {
+        modelsSource = "error";
+        modelsWarning =
+          error instanceof Error
+            ? error.message
+            : "Failed to load Mistral models for userinfo";
+      }
+      return {
+        type: secret.type,
+        protocol: "mistral_api",
+        apiKey: secret.accessToken ?? secret.setupToken ?? null,
+        accessToken: secret.accessToken ?? secret.setupToken ?? null,
+        models,
+        modelsSource: modelsSource ?? null,
+        modelsWarning: modelsWarning ?? null,
+        capabilities: { chat: true },
+        endpoints: mistralCredentialEndpoints(),
+        requiredHeaders: {
+          Authorization: "Bearer <apiKey>",
+          "Content-Type": "application/json",
+        },
+        docs: MISTRAL_API.docsUrl,
+        console: MISTRAL_API.consoleUrl,
+      };
+    }
+    case "mimo": {
+      let models: Awaited<ReturnType<typeof listMimoModels>>["models"] = [];
+      let modelsSource: "live" | "fallback" | "error" | undefined;
+      let modelsWarning: string | undefined;
+      try {
+        const listed = await listMimoModels(secret);
+        models = listed.models;
+        modelsSource = listed.source;
+        modelsWarning = listed.warning;
+      } catch (error) {
+        modelsSource = "error";
+        modelsWarning =
+          error instanceof Error
+            ? error.message
+            : "Failed to load MiMo models for userinfo";
+      }
+      const endpoints = mimoCredentialEndpoints(secret);
+      return {
+        type: secret.type,
+        protocol: "xiaomi_mimo",
+        apiKey: secret.accessToken ?? secret.setupToken ?? null,
+        accessToken: secret.accessToken ?? secret.setupToken ?? null,
+        baseUrl: endpoints.base,
+        models,
+        modelsSource: modelsSource ?? null,
+        modelsWarning: modelsWarning ?? null,
+        capabilities: {
+          chat: true,
+          reasoning: true,
+          thinkingLevels: ["none", "low", "medium", "high"],
+          defaultThinkingLevel: "medium",
+          thinkBlocks: {
+            outputItemType: "thinking",
+            requestShape: { thinking: { type: "enabled|disabled" } },
+            responseShape: { reasoning_content: "..." },
+          },
+        },
+        endpoints,
+        requiredHeaders: {
+          Authorization: "Bearer <apiKey>",
+          "api-key": "<apiKey>",
+          "Content-Type": "application/json",
+        },
+        docs: MIMO_API.docsUrl,
+        console: MIMO_API.consoleUrl,
+        note:
+          "sk- keys use api.xiaomimimo.com; tp- Token Plan keys use token-plan-cn.xiaomimimo.com (or the base URL from the Token Plan console).",
+      };
+    }
     default:
       return {
         type: secret.type,
@@ -1018,6 +1180,209 @@ export async function pollGrokDeviceOAuth(input: {
   });
   await db.deletePendingFlow(input.flowId);
   return { status: "connected" as const, connection: conn };
+}
+
+export async function startCopilotDeviceOAuth(userId: string) {
+  const body = new URLSearchParams({
+    client_id: COPILOT_OAUTH.clientId,
+    scope: COPILOT_OAUTH.scope,
+  });
+  const res = await fetch(COPILOT_OAUTH.deviceCodeUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      Accept: "application/json",
+      "User-Agent": COPILOT_OAUTH.headers["User-Agent"],
+    },
+    body,
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Copilot device code failed: ${res.status} ${text}`);
+  }
+  const json = (await res.json()) as {
+    device_code: string;
+    user_code: string;
+    verification_uri: string;
+    verification_uri_complete?: string;
+    expires_in: number;
+    interval?: number;
+  };
+  const flowId = randomUUID();
+  await db.savePendingFlow({
+    id: flowId,
+    userId,
+    provider: "copilot",
+    encryptedState: encryptSecret(
+      JSON.stringify({
+        deviceCode: json.device_code,
+        interval: json.interval ?? 5,
+      }),
+    ),
+    expiresAt: Date.now() + json.expires_in * 1000,
+  });
+  return {
+    flowId,
+    userCode: json.user_code,
+    verificationUri: json.verification_uri,
+    verificationUriComplete: json.verification_uri_complete,
+    expiresIn: json.expires_in,
+    interval: json.interval ?? 5,
+  };
+}
+
+export async function pollCopilotDeviceOAuth(input: {
+  userId: string;
+  flowId: string;
+}) {
+  const flow = await db.getPendingFlow(input.flowId, input.userId);
+  if (!flow || flow.provider !== "copilot") {
+    throw new Error("Copilot flow not found or expired");
+  }
+  const state = JSON.parse(decryptSecret(flow.encryptedState)) as {
+    deviceCode: string;
+    interval: number;
+  };
+  const body = new URLSearchParams({
+    grant_type: "urn:ietf:params:oauth:grant-type:device_code",
+    client_id: COPILOT_OAUTH.clientId,
+    device_code: state.deviceCode,
+  });
+  const res = await fetch(COPILOT_OAUTH.accessTokenUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      Accept: "application/json",
+      "User-Agent": COPILOT_OAUTH.headers["User-Agent"],
+    },
+    body,
+  });
+  const json = (await res.json()) as {
+    error?: string;
+    error_description?: string;
+    access_token?: string;
+    interval?: number;
+  };
+  if (!res.ok || json.error) {
+    if (
+      json.error === "authorization_pending" ||
+      json.error === "slow_down"
+    ) {
+      return {
+        status: json.error as "authorization_pending" | "slow_down",
+        interval: json.interval || state.interval,
+      };
+    }
+    throw new Error(
+      json.error_description ||
+        json.error ||
+        `Copilot poll failed (${res.status})`,
+    );
+  }
+  if (!json.access_token) throw new Error("Missing GitHub access token");
+
+  const session = await exchangeCopilotSession(json.access_token);
+  const conn = await db.upsertConnection({
+    userId: input.userId,
+    provider: "copilot",
+    status: "connected",
+    label: "GitHub Copilot",
+    encryptedPayload: storeProviderSecret({
+      type: "github_copilot_oauth",
+      accessToken: session.token,
+      refreshToken: json.access_token,
+      expiresAt: session.expiresAt,
+      raw: { apiBase: session.apiBase },
+    }),
+    meta: {
+      method: "device_oauth",
+      apiBase: session.apiBase,
+    },
+  });
+  await db.deletePendingFlow(input.flowId);
+  return { status: "connected" as const, connection: conn };
+}
+
+export async function connectMistralApiKey(userId: string, apiKey: string) {
+  const key = apiKey.trim();
+  if (!key) throw new Error("Mistral API key required");
+  // Soft validation — Mistral keys vary by plan (console / Vibe).
+  if (key.length < 16) throw new Error("Mistral API key looks too short");
+
+  const probe = await fetch(MISTRAL_API.modelsUrl, {
+    headers: {
+      Authorization: `Bearer ${key}`,
+      Accept: "application/json",
+    },
+  });
+  if (!probe.ok) {
+    const text = await probe.text();
+    throw new Error(
+      `Mistral key rejected (${probe.status}): ${text.slice(0, 200)}`,
+    );
+  }
+
+  return await db.upsertConnection({
+    userId,
+    provider: "mistral",
+    status: "connected",
+    label: "Mistral API key",
+    encryptedPayload: storeProviderSecret({
+      type: "mistral_api_key",
+      accessToken: key,
+      setupToken: key,
+    }),
+    meta: {
+      method: "api_key",
+      source: MISTRAL_API.consoleUrl,
+    },
+  });
+}
+
+export async function connectMimoApiKey(
+  userId: string,
+  apiKey: string,
+  baseUrl?: string,
+) {
+  const key = apiKey.trim();
+  if (!key) throw new Error("Xiaomi MiMo API key required");
+  if (!key.startsWith("sk-") && !key.startsWith("tp-") && !key.startsWith("mimo-")) {
+    throw new Error(
+      "Expected a MiMo API key (sk-… pay-as-you-go, tp-… Token Plan, or mimo-code-cli-key…)",
+    );
+  }
+  const resolvedBase = resolveMimoBaseUrl(key, baseUrl);
+  const probe = await fetch(`${resolvedBase}/models`, {
+    headers: {
+      Authorization: `Bearer ${key}`,
+      "api-key": key,
+      Accept: "application/json",
+    },
+  });
+  if (!probe.ok) {
+    const text = await probe.text();
+    throw new Error(
+      `MiMo key rejected (${probe.status}): ${text.slice(0, 200)}`,
+    );
+  }
+
+  return await db.upsertConnection({
+    userId,
+    provider: "mimo",
+    status: "connected",
+    label: key.startsWith("tp-") ? "Xiaomi MiMo Token Plan" : "Xiaomi MiMo API",
+    encryptedPayload: storeProviderSecret({
+      type: "xiaomi_mimo_api_key",
+      accessToken: key,
+      setupToken: key,
+      raw: { baseUrl: resolvedBase },
+    }),
+    meta: {
+      method: "api_key",
+      source: MIMO_API.docsUrl,
+      baseUrl: resolvedBase,
+    },
+  });
 }
 
 export function connectionPublicView(conn: ProviderConnection) {

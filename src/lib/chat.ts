@@ -15,6 +15,9 @@ import {
   chatAntigravity,
   listAntigravityModels,
 } from "./antigravity-client";
+import { chatCopilot, listCopilotModels } from "./copilot-client";
+import { chatMistral, listMistralModels } from "./mistral-client";
+import { chatMimo, listMimoModels } from "./mimo-client";
 import {
   ensureFreshConnection,
   type StoredProviderSecret,
@@ -204,6 +207,30 @@ export async function listProviderModels(input: {
       return { models: await listClaudeModels(secret) };
     case "grok":
       return { models: await listGrokModels(secret) };
+    case "copilot": {
+      const result = await listCopilotModels(secret);
+      return {
+        models: result.models,
+        warning: result.warning,
+        source: result.source,
+      };
+    }
+    case "mistral": {
+      const result = await listMistralModels(secret);
+      return {
+        models: result.models,
+        warning: result.warning,
+        source: result.source,
+      };
+    }
+    case "mimo": {
+      const result = await listMimoModels(secret);
+      return {
+        models: result.models,
+        warning: result.warning,
+        source: result.source,
+      };
+    }
     default:
       throw new Error("Unsupported provider");
   }
@@ -418,6 +445,15 @@ export async function runProviderChat(input: {
       });
     case "grok":
       return chatGrok(secret, input.prompt, input.model);
+    case "copilot":
+      return chatCopilot(secret, input.prompt, input.model);
+    case "mistral":
+      return chatMistral(secret, input.prompt, input.model);
+    case "mimo":
+      return chatMimo(secret, input.prompt, input.model, {
+        thinkingLevel: input.thinkingLevel,
+        includeThinking: input.includeThinking,
+      });
     default:
       throw new Error("Unsupported provider");
   }

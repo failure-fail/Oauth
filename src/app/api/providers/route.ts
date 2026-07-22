@@ -8,9 +8,13 @@ import {
   completeAntigravityOAuth,
   startAntigravityOAuth,
   connectClaudeSetupToken,
+  connectMistralApiKey,
+  connectMimoApiKey,
   connectionPublicView,
+  pollCopilotDeviceOAuth,
   pollGrokDeviceOAuth,
   startCodexDesktopOAuth,
+  startCopilotDeviceOAuth,
   startGrokDeviceOAuth,
 } from "@/lib/providers";
 
@@ -27,6 +31,16 @@ export async function GET() {
     connections,
   });
 }
+
+const providerEnum = z.enum([
+  "codex",
+  "antigravity",
+  "copilot",
+  "mistral",
+  "mimo",
+  "claude",
+  "grok",
+]);
 
 const actionSchema = z.discriminatedUnion("action", [
   z.object({
@@ -51,6 +65,22 @@ const actionSchema = z.discriminatedUnion("action", [
     acknowledgeRisk: z.literal(true),
   }),
   z.object({
+    action: z.literal("mistral_connect"),
+    apiKey: z.string().min(1),
+  }),
+  z.object({
+    action: z.literal("mimo_connect"),
+    apiKey: z.string().min(1),
+    baseUrl: z.string().url().optional(),
+  }),
+  z.object({
+    action: z.literal("copilot_start"),
+  }),
+  z.object({
+    action: z.literal("copilot_poll"),
+    flowId: z.string(),
+  }),
+  z.object({
     action: z.literal("grok_start"),
   }),
   z.object({
@@ -59,7 +89,7 @@ const actionSchema = z.discriminatedUnion("action", [
   }),
   z.object({
     action: z.literal("disconnect"),
-    provider: z.enum(["codex", "antigravity", "claude", "grok"]),
+    provider: providerEnum,
   }),
 ]);
 
@@ -98,6 +128,29 @@ export async function POST(req: Request) {
       case "claude_connect": {
         const conn = await connectClaudeSetupToken(user.id, body.setupToken);
         return NextResponse.json({ connection: connectionPublicView(conn) });
+      }
+      case "mistral_connect": {
+        const conn = await connectMistralApiKey(user.id, body.apiKey);
+        return NextResponse.json({ connection: connectionPublicView(conn) });
+      }
+      case "mimo_connect": {
+        const conn = await connectMimoApiKey(
+          user.id,
+          body.apiKey,
+          body.baseUrl,
+        );
+        return NextResponse.json({ connection: connectionPublicView(conn) });
+      }
+      case "copilot_start": {
+        const flow = await startCopilotDeviceOAuth(user.id);
+        return NextResponse.json(flow);
+      }
+      case "copilot_poll": {
+        const result = await pollCopilotDeviceOAuth({
+          userId: user.id,
+          flowId: body.flowId,
+        });
+        return NextResponse.json(result);
       }
       case "grok_start": {
         const flow = await startGrokDeviceOAuth(user.id);

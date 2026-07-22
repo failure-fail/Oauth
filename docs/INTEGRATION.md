@@ -303,6 +303,78 @@ await fetch(cred.endpoints.streamGenerateContent, {
 });
 ```
 
+### GitHub Copilot (`protocol: "github_copilot"`)
+
+Device-code OAuth with the public Copilot GitHub App (`Iv1.b507a08c87ecfe98`). Failure stores a short-lived Copilot **session** token (`tid=…`) as `accessToken` and the long-lived GitHub `ghu_…` token as `refreshToken`.
+
+Refresh: `GET credentials.endpoints.sessionToken` with `Authorization: Bearer <refreshToken>` plus the Copilot editor headers, then replace `accessToken`.
+
+**Chat** — always stream:
+
+```js
+const cred = providers.find((p) => p.provider === "copilot").credentials;
+const model = cred.models?.[0]?.id || "gpt-4.1";
+
+await fetch(cred.endpoints.chatCompletions, {
+  method: "POST",
+  headers: {
+    Authorization: `Bearer ${cred.accessToken}`,
+    Accept: "text/event-stream",
+    "Content-Type": "application/json",
+    ...cred.requiredHeaders,
+  },
+  body: JSON.stringify({
+    stream: true,
+    model,
+    messages: [{ role: "user", content: "Hello" }],
+  }),
+});
+```
+
+### Mistral (`protocol: "mistral_api"`)
+
+API key from [console.mistral.ai](https://console.mistral.ai/) (Le Chat / Vibe / pay-as-you-go). OpenAI-compatible.
+
+```js
+const cred = providers.find((p) => p.provider === "mistral").credentials;
+
+await fetch(cred.endpoints.chatCompletions, {
+  method: "POST",
+  headers: {
+    Authorization: `Bearer ${cred.apiKey}`,
+    "Content-Type": "application/json",
+  },
+  body: JSON.stringify({
+    model: cred.models?.[0]?.id || "mistral-large-latest",
+    messages: [{ role: "user", content: "Hello" }],
+  }),
+});
+```
+
+### Xiaomi MiMo (`protocol: "xiaomi_mimo"`)
+
+Xiaomi MiMo API Open Platform ([docs](https://mimo.mi.com/docs/en-US/quick-start/summary/first-api-call)). Paste `sk-…` (pay-as-you-go) or `tp-…` (Token Plan). Failure picks the base URL automatically (`api.xiaomimimo.com` vs `token-plan-cn.xiaomimimo.com`) unless you override.
+
+Supports OpenAI chat completions + optional `thinking: { type: "enabled" }` → `reasoning_content`.
+
+```js
+const cred = providers.find((p) => p.provider === "mimo").credentials;
+
+await fetch(cred.endpoints.chatCompletions, {
+  method: "POST",
+  headers: {
+    Authorization: `Bearer ${cred.apiKey}`,
+    "api-key": cred.apiKey,
+    "Content-Type": "application/json",
+  },
+  body: JSON.stringify({
+    model: cred.models?.[0]?.id || "mimo-v2.5-pro",
+    messages: [{ role: "user", content: "Hello" }],
+    thinking: { type: "enabled" },
+  }),
+});
+```
+
 ### Codex subscription Responses API
 
 Codex talks to the ChatGPT subscription Responses surface.
@@ -511,7 +583,7 @@ export async function userinfo(accessToken: string, origin = "https://oauth.fail
     email?: string;
     name?: string;
     providers: Array<{
-      provider: "codex" | "antigravity" | "claude" | "grok";
+      provider: "codex" | "antigravity" | "copilot" | "mistral" | "mimo" | "claude" | "grok";
       status: string;
       credentials?: Record<string, unknown>;
     }>;
