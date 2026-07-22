@@ -53,6 +53,15 @@ type MimoFlow = {
   instructions: string[];
 };
 
+type QwenFlow = {
+  flowId: string;
+  deviceCode: string;
+  userCode: string;
+  verificationUri: string;
+  verificationUriComplete?: string;
+  interval: number;
+};
+
 const GLYPH: Record<ProviderId, string> = {
   codex: "C",
   antigravity: "A",
@@ -60,6 +69,7 @@ const GLYPH: Record<ProviderId, string> = {
   mimo: "米",
   claude: "◆",
   grok: "G",
+  qwen: "Q",
 };
 
 function ProviderGlyph({ id }: { id: ProviderId }) {
@@ -133,6 +143,11 @@ export function ProvidersConfig({
   const [mimoCode, setMimoCode] = useState("");
   const [mimoApiKey, setMimoApiKey] = useState("");
   const [mimoBaseUrl, setMimoBaseUrl] = useState("");
+  const [qwenFlow, setQwenFlow] = useState<QwenFlow | null>(null);
+  const [qwenPollNote, setQwenPollNote] = useState<string | null>(null);
+  const [qwenChecking, setQwenChecking] = useState(false);
+  const [qwenApiKey, setQwenApiKey] = useState("");
+  const [qwenBaseUrl, setQwenBaseUrl] = useState("");
 
   const byProvider = useMemo(() => {
     const map = new Map<string, Connection>();
@@ -449,6 +464,141 @@ export function ProvidersConfig({
       setError(err instanceof Error ? err.message : "Copilot check failed");
     } finally {
       setCopilotChecking(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!qwenFlow) return;
+    const flowId = qwenFlow.flowId;
+    const deviceCode = qwenFlow.deviceCode;
+    let cancelled = false;
+    let delayMs = Math.max(5, qwenFlow.interval) * 1000;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let checks = 0;
+    let inFlight = false;
+
+    async function pollOnce() {
+      if (inFlight) return "pending" as const;
+      inFlight = true;
+      try {
+        const res = await fetch("/api/providers", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "qwen_poll",
+            flowId,
+            deviceCode,
+          }),
+        });
+        const data = await res.json();
+        if (cancelled) return "done" as const;
+        checks += 1;
+        if (!res.ok) {
+          const err =
+            typeof data.error === "string" ? data.error : "Qwen poll failed";
+          if (/authorization_pending|slow_down/i.test(err)) {
+            setQwenPollNote(`Still waiting for Qwen… (check #${checks})`);
+            return "pending" as const;
+          }
+          setError(err);
+          setQwenFlow(null);
+          setQwenPollNote(null);
+          return "done" as const;
+        }
+        if (data.status === "connected") {
+          setQwenFlow(null);
+          setActive(null);
+          setError(null);
+          setQwenPollNote(null);
+          setMessage("Qwen Code connected.");
+          await refresh();
+          return "done" as const;
+        }
+        if (data.status === "slow_down") {
+          delayMs = Math.min(delayMs + 5000, 20000);
+          setQwenPollNote(
+            `Qwen asked us to slow down — retrying (check #${checks})…`,
+          );
+          return "pending" as const;
+        }
+        setQwenPollNote(`Waiting for Qwen approval… (check #${checks})`);
+        return "pending" as const;
+      } catch (err) {
+        setQwenPollNote(
+          err instanceof Error
+            ? `Poll error: ${err.message}`
+            : "Poll error — retrying…",
+        );
+        return "pending" as const;
+      } finally {
+        inFlight = false;
+      }
+    }
+
+    async function loop() {
+      const result = await pollOnce();
+      if (cancelled || result === "done") return;
+      timer = setTimeout(loop, delayMs);
+    }
+
+    timer = setTimeout(loop, delayMs);
+    const onResume = () => {
+      if (document.visibilityState === "visible") void pollOnce();
+    };
+    window.addEventListener("focus", onResume);
+    document.addEventListener("visibilitychange", onResume);
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+      window.removeEventListener("focus", onResume);
+      document.removeEventListener("visibilitychange", onResume);
+    };
+  }, [qwenFlow]);
+
+  async function checkQwenNow() {
+    if (!qwenFlow || qwenChecking) return;
+    setQwenChecking(true);
+    try {
+      const res = await fetch("/api/providers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "qwen_poll",
+          flowId: qwenFlow.flowId,
+          deviceCode: qwenFlow.deviceCode,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        const err =
+          typeof data.error === "string" ? data.error : "Qwen poll failed";
+        if (/authorization_pending|slow_down/i.test(err)) {
+          setQwenPollNote(
+            "Qwen still pending — finish authorizing, then check again.",
+          );
+          return;
+        }
+        setError(err);
+        setQwenFlow(null);
+        setQwenPollNote(null);
+        return;
+      }
+      if (data.status === "connected") {
+        setQwenFlow(null);
+        setActive(null);
+        setError(null);
+        setQwenPollNote(null);
+        setMessage("Qwen Code connected.");
+        await refresh();
+        return;
+      }
+      setQwenPollNote(
+        "Qwen still pending — after you authorize, return here and press Check now.",
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Qwen check failed");
+    } finally {
+      setQwenChecking(false);
     }
   }
 
@@ -952,6 +1102,124 @@ export function ProvidersConfig({
                       </p>
                       <p className="user-code">{grokFlow.userCode}</p>
                       <p className="muted">Waiting for approval…</p>
+                    </>
+                  )}
+                </div>
+              )}
+
+              {open && provider.id === "qwen" && (
+                <div className="provider-form">
+                  {!qwenFlow ? (
+                    <>
+                      <button
+                        type="button"
+                        className="btn-primary"
+                        disabled={busy}
+                        onClick={async () => {
+                          if (busy) return;
+                          setQwenPollNote(null);
+                          setError(null);
+                          const data = await call({ action: "qwen_start" });
+                          if (!data?.deviceCode || !data?.flowId) {
+                            setError(
+                              "Qwen start did not return a device code — try again.",
+                            );
+                            return;
+                          }
+                          setQwenFlow({
+                            flowId: data.flowId,
+                            deviceCode: data.deviceCode,
+                            userCode: data.userCode,
+                            verificationUri: data.verificationUri,
+                            verificationUriComplete:
+                              data.verificationUriComplete,
+                            interval: data.interval ?? 5,
+                          });
+                          window.open(
+                            data.verificationUriComplete ||
+                              data.verificationUri,
+                            "_blank",
+                            "noopener,noreferrer",
+                          );
+                        }}
+                      >
+                        Start Qwen Code OAuth
+                      </button>
+                      <p className="muted">
+                        Free OAuth tier ended 2026-04-15. Or paste a DashScope /
+                        Coding Plan API key.
+                      </p>
+                      <input
+                        value={qwenApiKey}
+                        onChange={(e) => setQwenApiKey(e.target.value)}
+                        placeholder="Optional: DashScope / Coding Plan API key"
+                      />
+                      <input
+                        value={qwenBaseUrl}
+                        onChange={(e) => setQwenBaseUrl(e.target.value)}
+                        placeholder="Optional API base URL"
+                      />
+                      <button
+                        type="button"
+                        className="btn-ghost"
+                        disabled={busy || !qwenApiKey.trim()}
+                        onClick={async () => {
+                          await call({
+                            action: "qwen_connect",
+                            apiKey: qwenApiKey.trim(),
+                            baseUrl: qwenBaseUrl.trim() || undefined,
+                          });
+                          setQwenApiKey("");
+                          setQwenBaseUrl("");
+                          setActive(null);
+                          setMessage("Qwen API key connected.");
+                          await refresh();
+                        }}
+                      >
+                        Save API key
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <p>
+                        Enter this code at{" "}
+                        <a
+                          className="text-link"
+                          href={qwenFlow.verificationUri}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          {qwenFlow.verificationUri}
+                        </a>
+                      </p>
+                      <p className="user-code">{qwenFlow.userCode}</p>
+                      <p className="muted">
+                        Same device flow as Qwen Code CLI. Authorize only this
+                        code, then press Check now.
+                      </p>
+                      {qwenPollNote ? (
+                        <p className="muted">{qwenPollNote}</p>
+                      ) : null}
+                      <button
+                        type="button"
+                        className="btn-primary"
+                        disabled={qwenChecking}
+                        onClick={() => void checkQwenNow()}
+                      >
+                        {qwenChecking
+                          ? "Checking…"
+                          : "I’ve authorized — Check now"}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-ghost"
+                        onClick={() => {
+                          setQwenFlow(null);
+                          setQwenPollNote(null);
+                        }}
+                      >
+                        Cancel
+                      </button>
                     </>
                   )}
                 </div>

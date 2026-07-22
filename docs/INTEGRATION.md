@@ -1,6 +1,6 @@
 # Integrate Failure AI OAuth into your app
 
-Failure is a **PKCE OAuth 2.0** authorization server. Users create a Failure account, connect AI providers once, then sign into your app with **Sign in with Failure**. Your app receives tokens and (with the `providers` scope) live credential packages for Codex, Antigravity, Claude Code, and Grok Build.
+Failure is a **PKCE OAuth 2.0** authorization server. Users create a Failure account, connect AI providers once, then sign into your app with **Sign in with Failure**. Your app receives tokens and (with the `providers` scope) live credential packages for Codex, Antigravity, Copilot, MiMo, Claude Code, Grok Build, and Qwen Code.
 
 **Production**
 
@@ -510,6 +510,33 @@ Prefer headers/endpoints from the credential package over hardcoding versions.
 
 ---
 
+### Qwen Code (`protocol: "qwen_code"`)
+
+Same device OAuth + PKCE as [QwenLM/qwen-code](https://github.com/QwenLM/qwen-code). API is OpenAI-compatible DashScope (`compatible-mode/v1`). Free OAuth tier ended **2026-04-15** — Coding Plan / API keys remain valid.
+
+```js
+const cred = providers.find((p) => p.provider === "qwen").credentials;
+const base = cred.endpoints.base; // often dashscope …/compatible-mode/v1
+
+await fetch(`${base}/chat/completions`, {
+  method: "POST",
+  headers: {
+    Authorization: `Bearer ${cred.accessToken}`,
+    "Content-Type": "application/json",
+    "X-DashScope-AuthType":
+      cred.type === "qwen_api_key" ? "api-key" : "qwen-oauth",
+    Accept: "text/event-stream",
+  },
+  body: JSON.stringify({
+    model: "coder-model",
+    stream: true,
+    messages: [{ role: "user", content: "Hello" }],
+  }),
+});
+```
+
+---
+
 ## 6. End-to-end checklist
 
 1. User registers Failure account and connects providers at `/account/providers`
@@ -565,7 +592,7 @@ export async function userinfo(accessToken: string, origin = "https://oauth.fail
     email?: string;
     name?: string;
     providers: Array<{
-      provider: "codex" | "antigravity" | "copilot" | "mimo" | "claude" | "grok";
+      provider: "codex" | "antigravity" | "copilot" | "mimo" | "claude" | "grok" | "qwen";
       status: string;
       credentials?: Record<string, unknown>;
     }>;

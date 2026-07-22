@@ -10,6 +10,7 @@ const GLYPH: Record<string, string> = {
   mimo: "米",
   claude: "◆",
   grok: "G",
+  qwen: "Q",
 };
 
 export default function HomePage() {
@@ -22,8 +23,8 @@ export default function HomePage() {
         <h1 className="hero-title">One OAuth for every AI app.</h1>
         <p className="hero-lede">
           Users connect Codex, Antigravity, GitHub Copilot, Xiaomi MiMo, Claude
-          Code, and Grok Build once. Your app gets PKCE tokens, live models,
-          thinking levels, and provider credentials.
+          Code, Grok Build, and Qwen Code once. Your app gets PKCE tokens, live
+          models, thinking levels, and provider credentials.
         </p>
         <div className="hero-cta">
           <SignInWithFailure href="/signup" />

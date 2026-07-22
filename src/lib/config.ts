@@ -122,6 +122,24 @@ export const COPILOT_OAUTH = {
 };
 
 /**
+ * Qwen Code — same public OAuth client as QwenLM/qwen-code.
+ * Device flow + PKCE against chat.qwen.ai; API via DashScope compatible-mode.
+ */
+export const QWEN_OAUTH = {
+  clientId: "f0304373b74a44d2b584a3fb70ca9e56",
+  deviceCodeUrl: "https://chat.qwen.ai/api/v1/oauth2/device/code",
+  tokenUrl: "https://chat.qwen.ai/api/v1/oauth2/token",
+  scope: "openid profile email model.completion",
+  grantType: "urn:ietf:params:oauth:grant-type:device_code",
+  defaultApiBase: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+  codingPlanApiBase:
+    "https://dashscope.aliyuncs.com/compatible-mode/v1",
+  docsUrl:
+    "https://qwenlm.github.io/qwen-code-docs/en/users/configuration/auth/",
+  userAgent: "QwenCode/0.1.0 (failure-ai-oauth)",
+};
+
+/**
  * Xiaomi MiMo API Open Platform.
  * OAuth (same as MiMo Code CLI): https://platform.xiaomimimo.com/authorize
  * Pay-as-you-go: sk-… @ api.xiaomimimo.com

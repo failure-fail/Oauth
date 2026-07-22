@@ -10,13 +10,16 @@ import {
   startAntigravityOAuth,
   connectClaudeSetupToken,
   connectMimoApiKey,
+  connectQwenApiKey,
   connectionPublicView,
   pollCopilotDeviceOAuth,
   pollGrokDeviceOAuth,
+  pollQwenDeviceOAuth,
   startCodexDesktopOAuth,
   startCopilotDeviceOAuth,
   startGrokDeviceOAuth,
   startMimoOAuth,
+  startQwenDeviceOAuth,
 } from "@/lib/providers";
 
 export async function GET() {
@@ -40,6 +43,7 @@ const providerEnum = z.enum([
   "mimo",
   "claude",
   "grok",
+  "qwen",
 ]);
 
 const actionSchema = z.discriminatedUnion("action", [
@@ -91,6 +95,19 @@ const actionSchema = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("grok_poll"),
     flowId: z.string(),
+  }),
+  z.object({
+    action: z.literal("qwen_start"),
+  }),
+  z.object({
+    action: z.literal("qwen_poll"),
+    flowId: z.string(),
+    deviceCode: z.string().min(1).optional(),
+  }),
+  z.object({
+    action: z.literal("qwen_connect"),
+    apiKey: z.string().min(1),
+    baseUrl: z.string().url().optional(),
   }),
   z.object({
     action: z.literal("disconnect"),
@@ -182,6 +199,32 @@ export async function POST(req: Request) {
           flowId: body.flowId,
         });
         return NextResponse.json(result);
+      }
+      case "qwen_start": {
+        const flow = await startQwenDeviceOAuth(user.id);
+        return NextResponse.json(flow);
+      }
+      case "qwen_poll": {
+        const result = await pollQwenDeviceOAuth({
+          userId: user.id,
+          flowId: body.flowId,
+          deviceCode: body.deviceCode,
+        });
+        if (result.status === "connected") {
+          return NextResponse.json({
+            status: "connected",
+            connection: connectionPublicView(result.connection),
+          });
+        }
+        return NextResponse.json(result);
+      }
+      case "qwen_connect": {
+        const conn = await connectQwenApiKey(
+          user.id,
+          body.apiKey,
+          body.baseUrl,
+        );
+        return NextResponse.json({ connection: connectionPublicView(conn) });
       }
       case "disconnect": {
         await db.deleteConnection(user.id, body.provider as ProviderId);

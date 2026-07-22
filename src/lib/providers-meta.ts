@@ -84,6 +84,21 @@ export const PROVIDERS = [
     accentSoft: "rgba(232, 201, 138, 0.16)",
     risk: null as string | null,
   },
+  {
+    id: "qwen",
+    name: "Qwen Code",
+    short: "Device OAuth",
+    buttonLabel: "Connect Qwen Code",
+    connectedLabel: "Connected to Qwen Code",
+    description:
+      "Qwen Code device OAuth (same client as QwenLM/qwen-code) with DashScope-compatible API. Free OAuth tier ended 2026-04-15 — Coding Plan / API key still work.",
+    method: "device_oauth",
+    docsUrl: "https://qwenlm.github.io/qwen-code-docs/en/users/configuration/auth/",
+    accent: "#6a5acd",
+    accentSoft: "rgba(106, 90, 205, 0.16)",
+    risk:
+      "Qwen OAuth free tier was discontinued on 2026-04-15. Prefer Alibaba Cloud Coding Plan or a DashScope API key if OAuth chat is quota-blocked.",
+  },
 ] as const;
 
 export type ProviderId = (typeof PROVIDERS)[number]["id"];

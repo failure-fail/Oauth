@@ -13,6 +13,7 @@ const chatSchema = z.object({
     "grok",
     "copilot",
     "mimo",
+    "qwen",
   ]),
   prompt: z.string().min(1).max(4000),
   model: z.string().min(1).optional(),

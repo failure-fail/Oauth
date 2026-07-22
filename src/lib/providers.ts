@@ -6,6 +6,7 @@ import {
   COPILOT_OAUTH,
   GROK_OAUTH,
   MIMO_API,
+  QWEN_OAUTH,
   randomToken,
   type ProviderId,
 } from "./config";
@@ -23,6 +24,14 @@ import {
   pollCopilotDeviceCode,
   requestCopilotDeviceCode,
 } from "./copilot-auth";
+import {
+  listQwenModels,
+  normalizeQwenApiBase,
+  pollQwenDeviceCode,
+  qwenCredentialEndpoints,
+  refreshQwenTokens,
+  requestQwenDeviceCode,
+} from "./qwen-client";
 import {
   buildMimoAuthorizeUrl,
   decryptMimoOAuthPayload,
@@ -301,6 +310,39 @@ export async function ensureFreshConnection(
   }
 
   if (
+    conn.provider === "qwen" &&
+    tokenNeedsRefresh(secret) &&
+    secret.refreshToken
+  ) {
+    const refreshed = await refreshQwenTokens(secret.refreshToken);
+    secret = {
+      ...secret,
+      accessToken: refreshed.accessToken,
+      refreshToken: refreshed.refreshToken,
+      expiresAt: refreshed.expiresAt,
+      raw: {
+        ...(secret.raw || {}),
+        ...(refreshed.resourceUrl
+          ? { apiBase: normalizeQwenApiBase(refreshed.resourceUrl) }
+          : {}),
+      },
+    };
+    conn = await db.upsertConnection({
+      userId: conn.userId,
+      provider: "qwen",
+      status: conn.status,
+      label: conn.label,
+      encryptedPayload: storeProviderSecret(secret),
+      meta: {
+        ...(conn.meta || {}),
+        ...(refreshed.resourceUrl
+          ? { apiBase: normalizeQwenApiBase(refreshed.resourceUrl) }
+          : {}),
+      },
+    });
+  }
+
+  if (
     conn.provider === "copilot" &&
     tokenNeedsRefresh(secret) &&
     secret.refreshToken
@@ -573,6 +615,51 @@ export async function exposeProviderCredentials(
           scope: GROK_OAUTH.scope,
         },
       };
+    case "qwen": {
+      let models: Awaited<ReturnType<typeof listQwenModels>>["models"] = [];
+      let modelsSource: "live" | "fallback" | "error" | undefined;
+      let modelsWarning: string | undefined;
+      try {
+        const listed = await listQwenModels(secret);
+        models = listed.models;
+        modelsSource = listed.source;
+        modelsWarning = listed.warning;
+      } catch (error) {
+        modelsSource = "error";
+        modelsWarning =
+          error instanceof Error
+            ? error.message
+            : "Failed to load Qwen models for userinfo";
+      }
+      const endpoints = qwenCredentialEndpoints(secret);
+      return {
+        type: secret.type,
+        protocol: "qwen_code",
+        accessToken: secret.accessToken ?? secret.setupToken ?? null,
+        refreshToken: secret.refreshToken ?? null,
+        expiresAt: secret.expiresAt ?? null,
+        models,
+        modelsSource: modelsSource ?? null,
+        modelsWarning: modelsWarning ?? null,
+        capabilities: { chat: true, streamingRequired: true },
+        endpoints,
+        requiredHeaders: {
+          Authorization: "Bearer <accessToken>",
+          "Content-Type": "application/json",
+          "X-DashScope-AuthType":
+            secret.type === "qwen_api_key" ? "api-key" : "qwen-oauth",
+          "User-Agent": QWEN_OAUTH.userAgent,
+        },
+        oauth: {
+          clientId: QWEN_OAUTH.clientId,
+          scope: QWEN_OAUTH.scope,
+          tokenUrl: QWEN_OAUTH.tokenUrl,
+        },
+        docs: QWEN_OAUTH.docsUrl,
+        note:
+          "OpenAI-compatible DashScope endpoint. OAuth free tier ended 2026-04-15; Coding Plan / API keys still work. resource_url from token may override api base.",
+      };
+    }
     case "copilot": {
       let models: Awaited<ReturnType<typeof listCopilotModels>>["models"] = [];
       let modelsSource: "live" | "fallback" | "error" | undefined;
@@ -1417,6 +1504,137 @@ export async function connectMimoApiKey(
       method: "api_key",
       source: MIMO_API.docsUrl,
       baseUrl: resolvedBase,
+    },
+  });
+}
+
+export async function startQwenDeviceOAuth(userId: string) {
+  const auth = await requestQwenDeviceCode();
+  const flowId = randomUUID();
+  await db.savePendingFlow({
+    id: flowId,
+    userId,
+    provider: "qwen",
+    encryptedState: encryptSecret(
+      JSON.stringify({
+        deviceCode: auth.deviceCode,
+        codeVerifier: auth.codeVerifier,
+        userCode: auth.userCode,
+        interval: auth.interval,
+      }),
+    ),
+    expiresAt: Date.now() + auth.expiresIn * 1000,
+  });
+  return {
+    flowId,
+    deviceCode: auth.deviceCode,
+    userCode: auth.userCode,
+    verificationUri: auth.verificationUri,
+    verificationUriComplete: auth.verificationUriComplete,
+    expiresIn: auth.expiresIn,
+    interval: auth.interval,
+  };
+}
+
+export async function pollQwenDeviceOAuth(input: {
+  userId: string;
+  flowId: string;
+  deviceCode?: string;
+}) {
+  const existing = await db.getConnection(input.userId, "qwen");
+  if (existing?.status === "connected") {
+    await db.deletePendingFlow(input.flowId).catch(() => undefined);
+    return { status: "connected" as const, connection: existing };
+  }
+
+  const flow = await db.getPendingFlow(input.flowId, input.userId);
+  if (!flow || flow.provider !== "qwen") {
+    throw new Error("Qwen flow not found or expired — start OAuth again");
+  }
+  const state = JSON.parse(decryptSecret(flow.encryptedState)) as {
+    deviceCode: string;
+    codeVerifier: string;
+    interval?: number;
+  };
+  const deviceCode = input.deviceCode?.trim() || state.deviceCode;
+  const polled = await pollQwenDeviceCode({
+    deviceCode,
+    codeVerifier: state.codeVerifier,
+    interval: state.interval,
+  });
+  if (polled.status === "pending" || polled.status === "slow_down") {
+    return { status: polled.status, interval: polled.interval };
+  }
+  if (polled.status !== "complete") {
+    throw new Error(polled.error);
+  }
+
+  const apiBase = normalizeQwenApiBase(polled.resourceUrl);
+  const conn = await db.upsertConnection({
+    userId: input.userId,
+    provider: "qwen",
+    status: "connected",
+    label: "Qwen Code",
+    encryptedPayload: storeProviderSecret({
+      type: "qwen_code_oauth",
+      accessToken: polled.accessToken,
+      refreshToken: polled.refreshToken,
+      expiresAt: polled.expiresIn
+        ? Date.now() + polled.expiresIn * 1000
+        : undefined,
+      raw: { apiBase, resourceUrl: polled.resourceUrl },
+    }),
+    meta: {
+      method: "device_oauth",
+      apiBase,
+      warning:
+        "Qwen OAuth free tier ended 2026-04-15. If chat is quota-blocked, connect a Coding Plan / DashScope API key instead.",
+    },
+  });
+  await db.deletePendingFlow(input.flowId);
+  return { status: "connected" as const, connection: conn };
+}
+
+export async function connectQwenApiKey(
+  userId: string,
+  apiKey: string,
+  baseUrl?: string,
+) {
+  const key = apiKey.trim();
+  if (!key) throw new Error("Qwen API key required");
+  const resolvedBase = normalizeQwenApiBase(
+    baseUrl?.trim() || QWEN_OAUTH.defaultApiBase,
+  );
+  const probe = await fetch(`${resolvedBase}/models`, {
+    headers: {
+      Authorization: `Bearer ${key}`,
+      Accept: "application/json",
+      "X-DashScope-AuthType": "api-key",
+      "User-Agent": QWEN_OAUTH.userAgent,
+    },
+  });
+  if (!probe.ok) {
+    const text = await probe.text();
+    throw new Error(
+      `Qwen key rejected (${probe.status}): ${text.slice(0, 200)}`,
+    );
+  }
+
+  return await db.upsertConnection({
+    userId,
+    provider: "qwen",
+    status: "connected",
+    label: "Qwen API key",
+    encryptedPayload: storeProviderSecret({
+      type: "qwen_api_key",
+      accessToken: key,
+      setupToken: key,
+      raw: { apiBase: resolvedBase },
+    }),
+    meta: {
+      method: "api_key",
+      source: QWEN_OAUTH.docsUrl,
+      apiBase: resolvedBase,
     },
   });
 }
