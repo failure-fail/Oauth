@@ -1,0 +1,485 @@
+"use client";
+
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useSignInWithChatGPT } from "@openai-oauth/react";
+import { PROVIDERS, type ProviderId, type ProviderMeta } from "@/lib/providers-meta";
+
+type Connection = {
+  id: string;
+  provider: ProviderId;
+  status: string;
+  label?: string;
+  connectedAt: string;
+};
+
+type CodexFlow = {
+  flowId: string;
+  authorizeUrl: string;
+  instructions: string[];
+};
+
+type GrokFlow = {
+  flowId: string;
+  userCode: string;
+  verificationUri: string;
+  verificationUriComplete?: string;
+  interval: number;
+};
+
+function ProviderGlyph({ id }: { id: ProviderId }) {
+  const letter =
+    id === "chatgpt"
+      ? "G"
+      : id === "codex"
+        ? "X"
+        : id === "claude"
+          ? "C"
+          : id === "grok"
+            ? "X"
+            : "▸";
+  return <span className="provider-btn__glyph">{letter}</span>;
+}
+
+function ProviderButton({
+  provider,
+  connected,
+  busy,
+  onClick,
+  label,
+}: {
+  provider: ProviderMeta;
+  connected: boolean;
+  busy?: boolean;
+  onClick: () => void;
+  label?: string;
+}) {
+  return (
+    <button
+      type="button"
+      className={`provider-btn ${connected ? "is-connected" : ""}`}
+      style={
+        {
+          "--provider-accent": provider.accent,
+          "--provider-accent-soft": provider.accentSoft,
+} as CSSProperties
+        }
+      disabled={busy}
+      onClick={onClick}
+    >
+      <span className="provider-btn__shine" aria-hidden />
+      <ProviderGlyph id={provider.id} />
+      <span className="provider-btn__copy">
+        <strong>{label || (connected ? provider.connectedLabel : provider.buttonLabel)}</strong>
+        <em>{provider.short}</em>
+      </span>
+      <span className={`provider-btn__status ${connected ? "on" : "off"}`}>
+        {connected ? "Connected" : "Connect"}
+      </span>
+    </button>
+  );
+}
+
+export function ProvidersConfig({
+  initialConnections,
+}: {
+  initialConnections: Connection[];
+}) {
+  const [connections, setConnections] = useState(initialConnections);
+  const [active, setActive] = useState<ProviderId | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [codexFlow, setCodexFlow] = useState<CodexFlow | null>(null);
+  const [codexCode, setCodexCode] = useState("");
+  const [claudeToken, setClaudeToken] = useState("");
+  const [claudeAck, setClaudeAck] = useState(false);
+  const [grokFlow, setGrokFlow] = useState<GrokFlow | null>(null);
+  const [cursorKey, setCursorKey] = useState("");
+
+  const byProvider = useMemo(() => {
+    const map = new Map<string, Connection>();
+    for (const c of connections) map.set(c.provider, c);
+    return map;
+  }, [connections]);
+
+  async function refresh() {
+    const res = await fetch("/api/providers");
+    if (!res.ok) return;
+    const data = await res.json();
+    setConnections(data.connections);
+  }
+
+  async function call(body: Record<string, unknown>) {
+    setBusy(true);
+    setError(null);
+    const res = await fetch("/api/providers", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    setBusy(false);
+    if (!res.ok) {
+      setError(data.error || "Request failed");
+      throw new Error(data.error || "Request failed");
+    }
+    return data;
+  }
+
+  const chatgpt = useSignInWithChatGPT({
+    onSuccess: async (session) => {
+      try {
+        await call({
+          action: "chatgpt_connect",
+          accessToken: session.accessToken,
+          refreshToken: session.refreshToken,
+          expiresAt: session.expiresAt
+            ? Date.parse(session.expiresAt)
+            : undefined,
+          accountId: session.accountId,
+        });
+        setMessage("ChatGPT connected automatically.");
+        setActive(null);
+        await refresh();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "ChatGPT sync failed");
+      }
+    },
+    onError: (err) => {
+      setError(err.message || "ChatGPT sign-in failed");
+    },
+  });
+
+  useEffect(() => {
+    if (!grokFlow) return;
+    let cancelled = false;
+    const timer = setInterval(async () => {
+      try {
+        const data = await call({
+          action: "grok_poll",
+          flowId: grokFlow.flowId,
+        });
+        if (cancelled) return;
+        if (data.status === "connected") {
+          setGrokFlow(null);
+          setActive(null);
+          setMessage("Grok Build connected.");
+          await refresh();
+        }
+      } catch {
+        // keep polling until expiry surfaces
+      }
+    }, Math.max(3, grokFlow.interval) * 1000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [grokFlow]);
+
+  async function disconnect(provider: ProviderId) {
+    await call({ action: "disconnect", provider });
+    if (provider === "chatgpt" && chatgpt.isSignedIn) {
+      await chatgpt.logout();
+    }
+    setMessage(`${provider} disconnected.`);
+    await refresh();
+  }
+
+  return (
+    <div className="providers-config">
+      <div className="providers-config__grid">
+        {PROVIDERS.map((provider) => {
+          const conn = byProvider.get(provider.id);
+          const open = active === provider.id;
+          const chatgptBusy =
+            provider.id === "chatgpt" &&
+            (chatgpt.status === "checking" ||
+              chatgpt.status === "starting" ||
+              chatgpt.status === "redirecting");
+
+          return (
+            <section
+              key={provider.id}
+              className={`provider-tile ${conn ? "is-connected" : ""} ${open ? "is-open" : ""}`}
+              style={
+                {
+                  "--provider-accent": provider.accent,
+                  "--provider-accent-soft": provider.accentSoft,
+                } as CSSProperties
+              }
+            >
+              <div className="provider-tile__top">
+                <div>
+                  <p className="provider-tile__short">{provider.short}</p>
+                  <h3>{provider.name}</h3>
+                  <p>{provider.description}</p>
+                </div>
+              </div>
+
+              {provider.risk && <p className="risk-banner">{provider.risk}</p>}
+
+              <div className="provider-tile__actions">
+                {provider.id === "chatgpt" && !conn ? (
+                  <>
+                    <ProviderButton
+                      provider={provider}
+                      connected={false}
+                      busy={busy || chatgptBusy}
+                      label={
+                        chatgpt.status === "needs-extension"
+                          ? "Install extension to continue"
+                          : chatgptBusy
+                            ? "Connecting ChatGPT…"
+                            : provider.buttonLabel
+                      }
+                      onClick={async () => {
+                        setError(null);
+                        setMessage(null);
+                        if (chatgpt.status === "needs-extension") {
+                          window.open(chatgpt.installUrl, "_blank", "noopener");
+                          return;
+                        }
+                        setActive("chatgpt");
+                        await chatgpt.login();
+                      }}
+                    />
+                    {chatgpt.status === "needs-extension" && (
+                      <p className="muted">
+                        Install{" "}
+                        <a
+                          className="text-link"
+                          href={chatgpt.installUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          Sign in with ChatGPT
+                        </a>
+                        , then click the button again. Failure will sync tokens
+                        automatically.
+                      </p>
+                    )}
+                  </>
+                ) : !conn ? (
+                  <ProviderButton
+                    provider={provider}
+                    connected={false}
+                    busy={busy}
+                    onClick={() => {
+                      setActive(open ? null : provider.id);
+                      setError(null);
+                      setMessage(null);
+                    }}
+                  />
+                ) : (
+                  <div className="provider-tile__connected-row">
+                    <ProviderButton
+                      provider={provider}
+                      connected
+                      onClick={() => setActive(open ? null : provider.id)}
+                    />
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      disabled={busy}
+                      onClick={() => disconnect(provider.id)}
+                    >
+                      Disconnect
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {open && provider.id === "codex" && (
+                <div className="provider-form">
+                  {!codexFlow ? (
+                    <button
+                      type="button"
+                      className="btn-primary"
+                      disabled={busy}
+                      onClick={async () => {
+                        const data = await call({ action: "codex_start" });
+                        setCodexFlow(data);
+                        window.open(data.authorizeUrl, "_blank", "noopener");
+                      }}
+                    >
+                      Start Codex desktop OAuth
+                    </button>
+                  ) : (
+                    <>
+                      <ol>
+                        {codexFlow.instructions.map((line) => (
+                          <li key={line}>{line}</li>
+                        ))}
+                      </ol>
+                      <a
+                        className="text-link"
+                        href={codexFlow.authorizeUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Open authorize URL
+                      </a>
+                      <textarea
+                        value={codexCode}
+                        onChange={(e) => setCodexCode(e.target.value)}
+                        placeholder="Paste callback URL or code"
+                        rows={3}
+                      />
+                      <button
+                        type="button"
+                        className="btn-primary"
+                        disabled={busy || !codexCode}
+                        onClick={async () => {
+                          await call({
+                            action: "codex_complete",
+                            flowId: codexFlow.flowId,
+                            callbackUrlOrCode: codexCode,
+                          });
+                          setCodexFlow(null);
+                          setCodexCode("");
+                          setActive(null);
+                          setMessage("Codex connected.");
+                          await refresh();
+                        }}
+                      >
+                        Complete Codex connection
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
+
+              {open && provider.id === "chatgpt" && chatgpt.status === "signed-in" && !conn && (
+                <div className="provider-form">
+                  <p className="muted">Syncing ChatGPT session into Failure…</p>
+                </div>
+              )}
+
+              {open && provider.id === "claude" && (
+                <div className="provider-form">
+                  <p className="risk-banner">
+                    Warning: connecting Claude Code OAuth here may risk account
+                    deletion under Anthropic’s Consumer Terms.
+                  </p>
+                  <label className="check-row">
+                    <input
+                      type="checkbox"
+                      checked={claudeAck}
+                      onChange={(e) => setClaudeAck(e.target.checked)}
+                    />
+                    <span>I understand and accept the account deletion risk</span>
+                  </label>
+                  <input
+                    value={claudeToken}
+                    onChange={(e) => setClaudeToken(e.target.value)}
+                    placeholder="Paste output from claude setup-token"
+                  />
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    disabled={busy || !claudeToken || !claudeAck}
+                    onClick={async () => {
+                      await call({
+                        action: "claude_connect",
+                        setupToken: claudeToken,
+                        acknowledgeRisk: true,
+                      });
+                      setClaudeToken("");
+                      setClaudeAck(false);
+                      setActive(null);
+                      setMessage("Claude Code connected.");
+                      await refresh();
+                    }}
+                  >
+                    Save Claude token
+                  </button>
+                </div>
+              )}
+
+              {open && provider.id === "grok" && (
+                <div className="provider-form">
+                  {!grokFlow ? (
+                    <button
+                      type="button"
+                      className="btn-primary"
+                      disabled={busy}
+                      onClick={async () => {
+                        const data = await call({ action: "grok_start" });
+                        setGrokFlow(data);
+                        window.open(
+                          data.verificationUriComplete || data.verificationUri,
+                          "_blank",
+                          "noopener",
+                        );
+                      }}
+                    >
+                      Start Grok Build OAuth
+                    </button>
+                  ) : (
+                    <>
+                      <p>
+                        Enter this code at{" "}
+                        <a
+                          className="text-link"
+                          href={grokFlow.verificationUri}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          {grokFlow.verificationUri}
+                        </a>
+                      </p>
+                      <p className="user-code">{grokFlow.userCode}</p>
+                      <p className="muted">Waiting for approval…</p>
+                    </>
+                  )}
+                </div>
+              )}
+
+              {open && provider.id === "cursor" && (
+                <div className="provider-form">
+                  <p>
+                    Create a user API key at{" "}
+                    <a
+                      className="text-link"
+                      href="https://cursor.com/dashboard/integrations"
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      cursor.com/dashboard/integrations
+                    </a>
+                    .
+                  </p>
+                  <input
+                    value={cursorKey}
+                    onChange={(e) => setCursorKey(e.target.value)}
+                    placeholder="Cursor account API key"
+                  />
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    disabled={busy || !cursorKey}
+                    onClick={async () => {
+                      await call({
+                        action: "cursor_connect",
+                        accountKey: cursorKey,
+                      });
+                      setCursorKey("");
+                      setActive(null);
+                      setMessage("Cursor connected.");
+                      await refresh();
+                    }}
+                  >
+                    Save Cursor key
+                  </button>
+                </div>
+              )}
+            </section>
+          );
+        })}
+      </div>
+
+      {message && <p className="notice">{message}</p>}
+      {error && <p className="form-error">{error}</p>}
+    </div>
+  );
+}

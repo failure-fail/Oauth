@@ -1,10 +1,12 @@
 import { redirect } from "next/navigation";
+import Link from "next/link";
+import type { CSSProperties } from "react";
 import { getCurrentUser } from "@/lib/session";
 import { db } from "@/lib/db";
 import { connectionPublicView } from "@/lib/providers";
-import { ProviderConnectors } from "@/components/ProviderConnectors";
 import { AppsManager } from "@/components/AppsManager";
 import { FailureButtonCard } from "@/components/SignInWithFailure";
+import { PROVIDERS } from "@/lib/providers-meta";
 
 export default async function DashboardPage() {
   const user = await getCurrentUser();
@@ -22,25 +24,51 @@ export default async function DashboardPage() {
 
   return (
     <main className="page dashboard-grid">
+      <div className="account-subnav">
+        <Link href="/dashboard" className="is-active">
+          Overview
+        </Link>
+        <Link href="/account/providers">Providers</Link>
+        <Link href="/dashboard#apps">Apps</Link>
+      </div>
+
       <section>
         <p className="eyebrow">Dashboard</p>
         <h1 className="page-title">Hey, {user.name}</h1>
         <p className="muted">
-          Connect your AI providers, then register apps that can Sign in with
-          Failure.
+          Manage your Failure account, linked providers, and OAuth apps.
         </p>
       </section>
 
-      <section>
-        <h2>Connected providers</h2>
-        <p className="muted">
-          These credentials stay encrypted at rest and are only released to apps
-          you authorize with the <code>providers</code> scope.
-        </p>
-        <ProviderConnectors initialConnections={connections} />
+      <section className="dash-provider-summary">
+        <div className="dash-provider-summary__copy">
+          <h2>Providers</h2>
+          <p className="muted">
+            {connections.length}/{PROVIDERS.length} connected. Configure Codex,
+            ChatGPT, Claude Code, Grok Build, and Cursor from your account
+            providers page.
+          </p>
+        </div>
+        <div className="dash-provider-summary__pills">
+          {PROVIDERS.map((p) => {
+            const on = connections.some((c) => c.provider === p.id);
+            return (
+              <span
+                key={p.id}
+                className={`dash-pill ${on ? "on" : "off"}`}
+                style={{ "--provider-accent": p.accent } as CSSProperties}
+              >
+                {p.name}
+              </span>
+            );
+          })}
+        </div>
+        <Link className="btn-primary" href="/account/providers">
+          Open providers config
+        </Link>
       </section>
 
-      <section>
+      <section id="apps">
         <h2>Your apps</h2>
         <p className="muted">
           Register a public PKCE client, then drop the Failure button into your

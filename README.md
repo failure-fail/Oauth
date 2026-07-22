@@ -21,6 +21,8 @@ pnpm dev
 
 Open [http://localhost:3000](http://localhost:3000).
 
+Account providers config lives at `/account/providers` — stylized connect buttons for every provider. **ChatGPT is automated** via [`@openai-oauth/react`](https://github.com/EvanZhouDev/openai-oauth) (Sign in with ChatGPT); tokens sync into Failure on success.
+
 ### Env (optional)
 
 ```bash

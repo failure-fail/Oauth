@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@openai-oauth/react':
+        specifier: ^2.0.0
+        version: 2.0.0(react@19.2.4)
       bcryptjs:
         specifier: ^3.0.3
         version: 3.0.3
@@ -452,6 +455,20 @@ packages:
   '@nolyfill/is-core-module@1.0.39':
     resolution: {integrity: sha512-nn5ozdjYQpUCZlWGuxcJY/KpxkWQs4DcbMCmKojjyrYDEAGy4Ce19NN4v5MduafTwJlbKc99UA8YhSVqq9yPZA==}
     engines: {node: '>=12.4.0'}
+
+  '@openai-oauth/core@2.0.0':
+    resolution: {integrity: sha512-z9NYbfS8AQjriUnM8sPjGlpR//7oFwVxqYmabraXlwUokXfsUWk4V4O60jGWOJChUvE21B1A5G0CWDazM15+8g==}
+    engines: {node: '>=20'}
+
+  '@openai-oauth/react@2.0.0':
+    resolution: {integrity: sha512-3ex9yJjqmymyFboZQQe/Ab3WL9K2Cxz/ukXsO4iRC6yKZQxymrKbBNR5O8GZFkGIVy1O148V+sx0cN2cAwccgg==}
+    engines: {node: '>=20'}
+    peerDependencies:
+      react: '>=18.2.0 || >=19.0.0'
+
+  '@openai-oauth/web@2.0.0':
+    resolution: {integrity: sha512-+/RqOuXL6hqx2e7HL5YANtmZlkiq34G4a36JXNF1PY9oOEajF9VH+tLpHj3E96yxQWZfIz2jznueGI+L5YrGEQ==}
+    engines: {node: '>=20'}
 
   '@rtsao/scc@1.1.0':
     resolution: {integrity: sha512-zt6OdqaDoOnJ1ZYsCYGt9YmWzDXl4vQdKTyJev62gFhRGKdx7mcT54V9KIjg+d2wi9EXsPvAPKe7i7WjfVWB8g==}
@@ -2376,6 +2393,18 @@ snapshots:
       fastq: 1.20.1
 
   '@nolyfill/is-core-module@1.0.39': {}
+
+  '@openai-oauth/core@2.0.0': {}
+
+  '@openai-oauth/react@2.0.0(react@19.2.4)':
+    dependencies:
+      '@openai-oauth/core': 2.0.0
+      '@openai-oauth/web': 2.0.0
+      react: 19.2.4
+
+  '@openai-oauth/web@2.0.0':
+    dependencies:
+      '@openai-oauth/core': 2.0.0
 
   '@rtsao/scc@1.1.0': {}
 

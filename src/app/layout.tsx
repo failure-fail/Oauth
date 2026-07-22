@@ -44,6 +44,7 @@ export default async function RootLayout({
               {user ? (
                 <>
                   <Link href="/dashboard">Dashboard</Link>
+                  <Link href="/account/providers">Providers</Link>
                   <LogoutLink />
                 </>
               ) : (
