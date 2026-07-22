@@ -55,32 +55,59 @@ function parseExpiresAt(value: unknown): number | null {
 export async function exchangeCopilotSession(
   githubToken: string,
 ): Promise<{ token: string; expiresAt: number; apiBase: string }> {
-  const res = await fetch(COPILOT_OAUTH.sessionTokenUrl, {
-    method: "GET",
-    headers: {
+  const attempts: Array<Record<string, string>> = [
+    {
+      Accept: "application/json",
+      Authorization: `token ${githubToken}`,
+      ...COPILOT_OAUTH.headers,
+    },
+    {
       Accept: "application/json",
       Authorization: `Bearer ${githubToken}`,
       ...COPILOT_OAUTH.headers,
     },
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(
-      `Copilot session token failed: ${res.status} ${text.slice(0, 300)}`,
-    );
+  ];
+
+  const errors: string[] = [];
+  for (const headers of attempts) {
+    const res = await fetch(COPILOT_OAUTH.sessionTokenUrl, {
+      method: "GET",
+      headers,
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      errors.push(`${res.status} ${text.slice(0, 180)}`);
+      continue;
+    }
+    const data = (await res.json()) as {
+      token?: string;
+      expires_at?: number | string;
+      endpoints?: { api?: string };
+    };
+    if (!data.token) {
+      errors.push("session response missing token");
+      continue;
+    }
+    const expiresAt =
+      parseExpiresAt(data.expires_at) || Date.now() + 25 * 60 * 1000;
+    const apiBase =
+      (typeof data.endpoints?.api === "string" && data.endpoints.api.replace(/\/$/, "")) ||
+      resolveCopilotApiBase(data.token);
+    return { token: data.token, expiresAt, apiBase };
   }
-  const data = (await res.json()) as {
-    token?: string;
-    expires_at?: number | string;
-  };
-  if (!data.token) throw new Error("Copilot session response missing token");
-  const expiresAt =
-    parseExpiresAt(data.expires_at) || Date.now() + 25 * 60 * 1000;
-  return {
-    token: data.token,
-    expiresAt,
-    apiBase: resolveCopilotApiBase(data.token),
-  };
+
+  // Individual plans sometimes accept the raw GitHub token on the individual host.
+  if (/^gh[ou]_/i.test(githubToken)) {
+    return {
+      token: githubToken,
+      expiresAt: Date.now() + 8 * 60 * 60 * 1000,
+      apiBase: COPILOT_OAUTH.defaultApiBase,
+    };
+  }
+
+  throw new Error(
+    `Copilot session token failed: ${errors.join(" | ") || "unknown error"}`,
+  );
 }
 
 export async function refreshCopilotSession(

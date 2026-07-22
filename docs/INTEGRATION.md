@@ -331,29 +331,11 @@ await fetch(cred.endpoints.chatCompletions, {
 });
 ```
 
-### Mistral (`protocol: "mistral_api"`)
-
-API key from [console.mistral.ai](https://console.mistral.ai/) (Le Chat / Vibe / pay-as-you-go). OpenAI-compatible.
-
-```js
-const cred = providers.find((p) => p.provider === "mistral").credentials;
-
-await fetch(cred.endpoints.chatCompletions, {
-  method: "POST",
-  headers: {
-    Authorization: `Bearer ${cred.apiKey}`,
-    "Content-Type": "application/json",
-  },
-  body: JSON.stringify({
-    model: cred.models?.[0]?.id || "mistral-large-latest",
-    messages: [{ role: "user", content: "Hello" }],
-  }),
-});
-```
-
 ### Xiaomi MiMo (`protocol: "xiaomi_mimo"`)
 
-Xiaomi MiMo API Open Platform ([docs](https://mimo.mi.com/docs/en-US/quick-start/summary/first-api-call)). Paste `sk-…` (pay-as-you-go) or `tp-…` (Token Plan). Failure picks the base URL automatically (`api.xiaomimimo.com` vs `token-plan-cn.xiaomimimo.com`) unless you override.
+Same platform OAuth as **MiMo Code CLI** (`platform.xiaomimimo.com/authorize` with X25519 key exchange). Failure decrypts the returned payload into a managed API key (often `mimo-code-cli-key-…`) plus optional Token Plan `baseUrl`.
+
+Manual API-key paste (`sk-` / `tp-`) remains supported as a fallback.
 
 Supports OpenAI chat completions + optional `thinking: { type: "enabled" }` → `reasoning_content`.
 
@@ -583,7 +565,7 @@ export async function userinfo(accessToken: string, origin = "https://oauth.fail
     email?: string;
     name?: string;
     providers: Array<{
-      provider: "codex" | "antigravity" | "copilot" | "mistral" | "mimo" | "claude" | "grok";
+      provider: "codex" | "antigravity" | "copilot" | "mimo" | "claude" | "grok";
       status: string;
       credentials?: Record<string, unknown>;
     }>;

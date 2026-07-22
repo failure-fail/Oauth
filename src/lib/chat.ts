@@ -15,8 +15,10 @@ import {
   chatAntigravity,
   listAntigravityModels,
 } from "./antigravity-client";
-import { chatCopilot, listCopilotModels } from "./copilot-client";
-import { chatMistral, listMistralModels } from "./mistral-client";
+import {
+  chatCopilot,
+  listCopilotModels,
+} from "./copilot-client";
 import { chatMimo, listMimoModels } from "./mimo-client";
 import {
   ensureFreshConnection,
@@ -209,14 +211,6 @@ export async function listProviderModels(input: {
       return { models: await listGrokModels(secret) };
     case "copilot": {
       const result = await listCopilotModels(secret);
-      return {
-        models: result.models,
-        warning: result.warning,
-        source: result.source,
-      };
-    }
-    case "mistral": {
-      const result = await listMistralModels(secret);
       return {
         models: result.models,
         warning: result.warning,
@@ -447,8 +441,6 @@ export async function runProviderChat(input: {
       return chatGrok(secret, input.prompt, input.model);
     case "copilot":
       return chatCopilot(secret, input.prompt, input.model);
-    case "mistral":
-      return chatMistral(secret, input.prompt, input.model);
     case "mimo":
       return chatMimo(secret, input.prompt, input.model, {
         thinkingLevel: input.thinkingLevel,

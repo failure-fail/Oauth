@@ -1,3 +1,4 @@
+import { createHash, createPrivateKey, createPublicKey, diffieHellman, generateKeyPairSync, createDecipheriv, randomBytes } from "crypto";
 import { MIMO_API } from "./config";
 import type { StoredProviderSecret } from "./providers";
 import type { ProviderModel, ThinkingLevel, ThinkingPayload } from "./codex-client";
@@ -20,6 +21,12 @@ const FALLBACK_MODELS: ProviderModel[] = [
     supportsReasoningSummaries: true,
   },
 ];
+
+/** Same flow as MiMo Code CLI (`plugin/mimo.ts`). */
+export const MIMO_OAUTH = {
+  platformUrl: MIMO_API.platformUrl,
+  kn: "mimocode",
+};
 
 export function resolveMimoBaseUrl(
   apiKey: string,
@@ -52,6 +59,87 @@ export function mimoHeaders(secret: StoredProviderSecret): Record<string, string
     "api-key": key,
     Accept: "application/json",
     "Content-Type": "application/json",
+    "X-Mimo-Source": "failure-ai-oauth",
+  };
+}
+
+export function generateMimoOAuthKeyPair(): {
+  publicKey: string;
+  privateKeyDerBase64: string;
+} {
+  const keyPair = generateKeyPairSync("x25519", {
+    publicKeyEncoding: { type: "spki", format: "der" },
+    privateKeyEncoding: { type: "pkcs8", format: "der" },
+  });
+  return {
+    publicKey: Buffer.from(keyPair.publicKey).toString("base64url"),
+    privateKeyDerBase64: Buffer.from(keyPair.privateKey).toString("base64"),
+  };
+}
+
+export function buildMimoAuthorizeUrl(input: {
+  publicKey: string;
+  keyName: string;
+  /** Manual paste flow uses the platform code callback. */
+  manual?: boolean;
+}): string {
+  const redirectUri = input.manual
+    ? `${MIMO_OAUTH.platformUrl}/authorize/code/callback`
+    : `${MIMO_OAUTH.platformUrl}/authorize/code/callback`;
+  const params = new URLSearchParams({
+    pk: input.publicKey,
+    redirect_uri: redirectUri,
+    kn: MIMO_OAUTH.kn,
+    key_name: input.keyName,
+  });
+  return `${MIMO_OAUTH.platformUrl}/authorize?${params.toString()}`;
+}
+
+export function newMimoKeyName(): string {
+  return `failure-oauth-key-${randomBytes(4).toString("hex")}`;
+}
+
+/**
+ * Decrypt the `u` / paste code from Xiaomi MiMo platform OAuth.
+ * Format: ephemeralPublicKey(32) + nonce(12) + ciphertext + tag(16)
+ */
+export function decryptMimoOAuthPayload(
+  privateKeyDerBase64: string,
+  encryptedBase64Url: string,
+): { sk?: string; uid: string; url?: string } {
+  const encrypted = Buffer.from(encryptedBase64Url.trim(), "base64url");
+  if (encrypted.length < 32 + 12 + 16) {
+    throw new Error("MiMo OAuth code looks truncated or invalid");
+  }
+  const ephemeralPub = encrypted.subarray(0, 32);
+  const nonce = encrypted.subarray(32, 44);
+  const ciphertextAndTag = encrypted.subarray(44);
+  const tag = ciphertextAndTag.subarray(ciphertextAndTag.length - 16);
+  const ciphertext = ciphertextAndTag.subarray(0, ciphertextAndTag.length - 16);
+
+  const privateKey = createPrivateKey({
+    key: Buffer.from(privateKeyDerBase64, "base64"),
+    format: "der",
+    type: "pkcs8",
+  });
+  const ephemeralPublicKey = createPublicKey({
+    key: Buffer.concat([
+      Buffer.from("302a300506032b656e032100", "hex"),
+      ephemeralPub,
+    ]),
+    format: "der",
+    type: "spki",
+  });
+
+  const sharedSecret = diffieHellman({ privateKey, publicKey: ephemeralPublicKey });
+  const derivedKey = createHash("sha256").update(sharedSecret).digest();
+  const decipher = createDecipheriv("aes-256-gcm", derivedKey, nonce);
+  decipher.setAuthTag(tag);
+  const decrypted = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+  return JSON.parse(decrypted.toString("utf-8")) as {
+    sk?: string;
+    uid: string;
+    url?: string;
   };
 }
 
@@ -158,8 +246,7 @@ export async function chatMimo(
     messages: [
       {
         role: "system",
-        content:
-          "You are MiMo, an AI assistant developed by Xiaomi.",
+        content: "You are MiMo, an AI assistant developed by Xiaomi.",
       },
       { role: "user", content: prompt },
     ],
@@ -225,5 +312,6 @@ export function mimoCredentialEndpoints(secret: StoredProviderSecret) {
     models: `${base}/models`,
     chatCompletions: `${base}/chat/completions`,
     anthropicCompatible: MIMO_API.anthropicPaygBaseUrl,
+    authorize: `${MIMO_OAUTH.platformUrl}/authorize`,
   };
 }

@@ -45,11 +45,17 @@ type CopilotFlow = {
   interval: number;
 };
 
+type MimoFlow = {
+  flowId: string;
+  authorizeUrl: string;
+  keyName: string;
+  instructions: string[];
+};
+
 const GLYPH: Record<ProviderId, string> = {
   codex: "C",
   antigravity: "A",
   copilot: "GH",
-  mistral: "M",
   mimo: "米",
   claude: "◆",
   grok: "G",
@@ -120,7 +126,8 @@ export function ProvidersConfig({
   const [claudeAck, setClaudeAck] = useState(false);
   const [grokFlow, setGrokFlow] = useState<GrokFlow | null>(null);
   const [copilotFlow, setCopilotFlow] = useState<CopilotFlow | null>(null);
-  const [mistralApiKey, setMistralApiKey] = useState("");
+  const [mimoFlow, setMimoFlow] = useState<MimoFlow | null>(null);
+  const [mimoCode, setMimoCode] = useState("");
   const [mimoApiKey, setMimoApiKey] = useState("");
   const [mimoBaseUrl, setMimoBaseUrl] = useState("");
 
@@ -209,14 +216,31 @@ export function ProvidersConfig({
     let cancelled = false;
     const timer = setInterval(async () => {
       try {
-        const data = await call({
-          action: "copilot_poll",
-          flowId: copilotFlow.flowId,
+        const res = await fetch("/api/providers", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "copilot_poll",
+            flowId: copilotFlow.flowId,
+          }),
         });
+        const data = await res.json();
         if (cancelled) return;
+        if (!res.ok) {
+          // Keep waiting on pending-style races; surface hard failures.
+          if (
+            typeof data.error === "string" &&
+            !/authorization_pending|slow_down/i.test(data.error)
+          ) {
+            setError(data.error);
+            setCopilotFlow(null);
+          }
+          return;
+        }
         if (data.status === "connected") {
           setCopilotFlow(null);
           setActive(null);
+          setError(null);
           setMessage("GitHub Copilot connected.");
           await refresh();
         }
@@ -503,75 +527,113 @@ export function ProvidersConfig({
                         </a>
                       </p>
                       <p className="user-code">{copilotFlow.userCode}</p>
-                      <p className="muted">Waiting for approval…</p>
+                      <p className="muted">
+                        Waiting for GitHub approval, then exchanging a Copilot
+                        session token…
+                      </p>
                     </>
                   )}
                 </div>
               )}
 
-              {open && provider.id === "mistral" && (
-                <div className="provider-form">
-                  <input
-                    value={mistralApiKey}
-                    onChange={(e) => setMistralApiKey(e.target.value)}
-                    placeholder="Paste API key from console.mistral.ai"
-                  />
-                  <button
-                    type="button"
-                    className="btn-primary"
-                    disabled={busy || !mistralApiKey}
-                    onClick={async () => {
-                      await call({
-                        action: "mistral_connect",
-                        apiKey: mistralApiKey,
-                      });
-                      setMistralApiKey("");
-                      setActive(null);
-                      setMessage("Mistral connected.");
-                      await refresh();
-                    }}
-                  >
-                    Save Mistral API key
-                  </button>
-                </div>
-              )}
-
               {open && provider.id === "mimo" && (
                 <div className="provider-form">
-                  <input
-                    value={mimoApiKey}
-                    onChange={(e) => setMimoApiKey(e.target.value)}
-                    placeholder="sk-… or tp-… key"
-                  />
-                  <input
-                    value={mimoBaseUrl}
-                    onChange={(e) => setMimoBaseUrl(e.target.value)}
-                    placeholder="Optional Token Plan base URL"
-                  />
-                  <p className="muted">
-                    sk- → api.xiaomimimo.com, tp- → token-plan-cn.xiaomimimo.com
-                  </p>
-                  <button
-                    type="button"
-                    className="btn-primary"
-                    disabled={busy || !mimoApiKey}
-                    onClick={async () => {
-                      await call({
-                        action: "mimo_connect",
-                        apiKey: mimoApiKey,
-                        ...(mimoBaseUrl.trim()
-                          ? { baseUrl: mimoBaseUrl.trim() }
-                          : {}),
-                      });
-                      setMimoApiKey("");
-                      setMimoBaseUrl("");
-                      setActive(null);
-                      setMessage("Xiaomi MiMo connected.");
-                      await refresh();
-                    }}
-                  >
-                    Save MiMo API key
-                  </button>
+                  {!mimoFlow ? (
+                    <>
+                      <button
+                        type="button"
+                        className="btn-primary"
+                        disabled={busy}
+                        onClick={async () => {
+                          const data = await call({ action: "mimo_start" });
+                          setMimoFlow(data);
+                          window.open(data.authorizeUrl, "_blank", "noopener");
+                        }}
+                      >
+                        Start Xiaomi MiMo OAuth
+                      </button>
+                      <p className="muted">
+                        Or paste an existing API key (`sk-` / `tp-` /
+                        `mimo-code-cli-key-…`).
+                      </p>
+                      <input
+                        value={mimoApiKey}
+                        onChange={(e) => setMimoApiKey(e.target.value)}
+                        placeholder="Optional: paste MiMo API key"
+                      />
+                      <input
+                        value={mimoBaseUrl}
+                        onChange={(e) => setMimoBaseUrl(e.target.value)}
+                        placeholder="Optional Token Plan base URL"
+                      />
+                      <button
+                        type="button"
+                        className="btn-secondary"
+                        disabled={busy || !mimoApiKey}
+                        onClick={async () => {
+                          await call({
+                            action: "mimo_connect",
+                            apiKey: mimoApiKey,
+                            ...(mimoBaseUrl.trim()
+                              ? { baseUrl: mimoBaseUrl.trim() }
+                              : {}),
+                          });
+                          setMimoApiKey("");
+                          setMimoBaseUrl("");
+                          setActive(null);
+                          setMessage("Xiaomi MiMo connected via API key.");
+                          await refresh();
+                        }}
+                      >
+                        Save API key instead
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <p className="muted">
+                        Same OAuth as MiMo Code CLI via{" "}
+                        <code>platform.xiaomimimo.com</code>.
+                      </p>
+                      <ol>
+                        {mimoFlow.instructions.map((line) => (
+                          <li key={line}>{line}</li>
+                        ))}
+                      </ol>
+                      <a
+                        className="btn-secondary btn-secondary--link"
+                        href={mimoFlow.authorizeUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Open authorize URL
+                      </a>
+                      <textarea
+                        value={mimoCode}
+                        onChange={(e) => setMimoCode(e.target.value)}
+                        placeholder="Paste the authorization code (or callback URL containing u=…)"
+                        rows={3}
+                      />
+                      <button
+                        type="button"
+                        className="btn-primary"
+                        disabled={busy || !mimoCode.trim()}
+                        onClick={async () => {
+                          await call({
+                            action: "mimo_complete",
+                            flowId: mimoFlow.flowId,
+                            code: mimoCode,
+                          });
+                          setMimoFlow(null);
+                          setMimoCode("");
+                          setActive(null);
+                          setMessage("Xiaomi MiMo connected via platform OAuth.");
+                          await refresh();
+                        }}
+                      >
+                        Complete MiMo OAuth
+                      </button>
+                    </>
+                  )}
                 </div>
               )}
 

@@ -7,7 +7,6 @@ const GLYPH: Record<string, string> = {
   codex: "C",
   antigravity: "A",
   copilot: "GH",
-  mistral: "M",
   mimo: "米",
   claude: "◆",
   grok: "G",
@@ -22,9 +21,9 @@ export default function HomePage() {
         <p className="brand-hero">Failure</p>
         <h1 className="hero-title">One OAuth for every AI app.</h1>
         <p className="hero-lede">
-          Users connect Codex, Antigravity, GitHub Copilot, Mistral, Xiaomi MiMo,
-          Claude Code, and Grok Build once. Your app gets PKCE tokens, live
-          models, thinking levels, and provider credentials.
+          Users connect Codex, Antigravity, GitHub Copilot, Xiaomi MiMo, Claude
+          Code, and Grok Build once. Your app gets PKCE tokens, live models,
+          thinking levels, and provider credentials.
         </p>
         <div className="hero-cta">
           <SignInWithFailure href="/signup" />

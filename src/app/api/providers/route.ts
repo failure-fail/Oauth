@@ -6,9 +6,9 @@ import { getCurrentUser } from "@/lib/session";
 import {
   completeCodexDesktopOAuth,
   completeAntigravityOAuth,
+  completeMimoOAuth,
   startAntigravityOAuth,
   connectClaudeSetupToken,
-  connectMistralApiKey,
   connectMimoApiKey,
   connectionPublicView,
   pollCopilotDeviceOAuth,
@@ -16,6 +16,7 @@ import {
   startCodexDesktopOAuth,
   startCopilotDeviceOAuth,
   startGrokDeviceOAuth,
+  startMimoOAuth,
 } from "@/lib/providers";
 
 export async function GET() {
@@ -36,7 +37,6 @@ const providerEnum = z.enum([
   "codex",
   "antigravity",
   "copilot",
-  "mistral",
   "mimo",
   "claude",
   "grok",
@@ -65,8 +65,12 @@ const actionSchema = z.discriminatedUnion("action", [
     acknowledgeRisk: z.literal(true),
   }),
   z.object({
-    action: z.literal("mistral_connect"),
-    apiKey: z.string().min(1),
+    action: z.literal("mimo_start"),
+  }),
+  z.object({
+    action: z.literal("mimo_complete"),
+    flowId: z.string(),
+    code: z.string().min(1),
   }),
   z.object({
     action: z.literal("mimo_connect"),
@@ -129,8 +133,16 @@ export async function POST(req: Request) {
         const conn = await connectClaudeSetupToken(user.id, body.setupToken);
         return NextResponse.json({ connection: connectionPublicView(conn) });
       }
-      case "mistral_connect": {
-        const conn = await connectMistralApiKey(user.id, body.apiKey);
+      case "mimo_start": {
+        const flow = await startMimoOAuth(user.id);
+        return NextResponse.json(flow);
+      }
+      case "mimo_complete": {
+        const conn = await completeMimoOAuth({
+          userId: user.id,
+          flowId: body.flowId,
+          code: body.code,
+        });
         return NextResponse.json({ connection: connectionPublicView(conn) });
       }
       case "mimo_connect": {

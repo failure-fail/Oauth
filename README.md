@@ -9,8 +9,7 @@ Universal **PKCE OAuth** that any app can integrate. Users sign up with email an
 | **Codex** | Official desktop OAuth (PKCE + `localhost:1455`, same as Codex CLI/Desktop) |
 | **Antigravity** | Google OAuth PKCE (`localhost:51121`) — Cloud Code Assist / Antigravity IDE client |
 | **GitHub Copilot** | Device-code OAuth (VS Code Copilot GitHub App) → session token |
-| **Mistral** | API key from console.mistral.ai (Le Chat / Vibe / pay-as-you-go) |
-| **Xiaomi MiMo** | API key from mimo.mi.com (`sk-` paygo or `tp-` Token Plan) |
+| **Xiaomi MiMo** | Platform OAuth (`platform.xiaomimimo.com`, same as MiMo Code CLI) |
 | **Claude Code** | `claude setup-token` — **risk of account deletion** (Anthropic ToS) |
 | **Grok Build** | Grok Build / xAI device-code OAuth |
 
@@ -69,8 +68,7 @@ UserInfo (with `providers` scope) returns linked credential packages:
 - **Codex** → `protocol: "codex_backend"` with `originator: codex_cli_rs`
 - **Antigravity** → `protocol: "antigravity_cloudcode"` (Google Cloud Code Assist)
 - **GitHub Copilot** → `protocol: "github_copilot"` (session `tid=` token + GitHub refresh)
-- **Mistral** → `protocol: "mistral_api"`
-- **Xiaomi MiMo** → `protocol: "xiaomi_mimo"`
+- **Xiaomi MiMo** → `protocol: "xiaomi_mimo"` (platform OAuth → managed API key)
 - Claude → Anthropic OAuth headers
 - Grok → `cli-chat-proxy.grok.com`
 

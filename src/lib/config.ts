@@ -116,25 +116,18 @@ export const COPILOT_OAUTH = {
   },
 };
 
-/** Mistral AI platform (console.mistral.ai / Le Chat / Vibe keys). */
-export const MISTRAL_API = {
-  baseUrl: "https://api.mistral.ai/v1",
-  modelsUrl: "https://api.mistral.ai/v1/models",
-  chatUrl: "https://api.mistral.ai/v1/chat/completions",
-  docsUrl: "https://docs.mistral.ai/",
-  consoleUrl: "https://console.mistral.ai/",
-};
-
 /**
  * Xiaomi MiMo API Open Platform.
+ * OAuth (same as MiMo Code CLI): https://platform.xiaomimimo.com/authorize
  * Pay-as-you-go: sk-… @ api.xiaomimimo.com
  * Token Plan: tp-… @ token-plan-cn.xiaomimimo.com (or the URL shown in console)
  */
 export const MIMO_API = {
+  platformUrl: "https://platform.xiaomimimo.com",
   paygBaseUrl: "https://api.xiaomimimo.com/v1",
   tokenPlanBaseUrl: "https://token-plan-cn.xiaomimimo.com/v1",
   anthropicPaygBaseUrl: "https://api.xiaomimimo.com/anthropic",
   docsUrl:
-    "https://mimo.mi.com/docs/en-US/quick-start/summary/first-api-call",
+    "https://mimo.mi.com/docs/en-US/tokenplan/integration/mimo-code",
   consoleUrl: "https://platform.xiaomimimo.com/",
 };

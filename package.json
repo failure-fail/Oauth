@@ -2,7 +2,7 @@
   "name": "failure-oauth",
   "version": "0.1.0",
   "private": true,
-  "description": "Failure AI OAuth — universal PKCE OAuth for Codex, Antigravity, Copilot, Mistral, MiMo, Claude Code, and Grok Build",
+  "description": "Failure AI OAuth — universal PKCE OAuth for Codex, Antigravity, Copilot, MiMo, Claude Code, and Grok Build",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
