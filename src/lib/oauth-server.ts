@@ -168,7 +168,7 @@ export function universalUiFormat() {
     },
     card: {
       title: "Sign in with Failure",
-      subtitle: "One OAuth for Codex, Antigravity, Claude Code, and Grok Build.",
+      subtitle: "One OAuth for every AI provider your apps need.",
       accent: "ember-glass",
     },
   };
