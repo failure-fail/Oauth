@@ -64,64 +64,6 @@ async function resolveCodexClientVersion(): Promise<string> {
   return DEFAULT_CODEX_CLIENT_VERSION;
 }
 
-const FALLBACK_CHAT_MODELS: ProviderModel[] = [
-  {
-    id: "gpt-5.6-sol",
-    name: "GPT-5.6 Sol",
-    kind: "chat",
-    reasoningLevels: DEFAULT_REASONING_LEVELS,
-    defaultReasoningLevel: "medium",
-    supportsReasoningSummaries: true,
-  },
-  {
-    id: "gpt-5.6",
-    name: "GPT-5.6",
-    kind: "chat",
-    reasoningLevels: DEFAULT_REASONING_LEVELS,
-    defaultReasoningLevel: "medium",
-    supportsReasoningSummaries: true,
-  },
-  {
-    id: "gpt-5.5",
-    name: "GPT-5.5",
-    kind: "chat",
-    reasoningLevels: DEFAULT_REASONING_LEVELS,
-    defaultReasoningLevel: "medium",
-    supportsReasoningSummaries: true,
-  },
-  {
-    id: "gpt-5.4",
-    name: "GPT-5.4",
-    kind: "chat",
-    reasoningLevels: DEFAULT_REASONING_LEVELS,
-    defaultReasoningLevel: "medium",
-    supportsReasoningSummaries: true,
-  },
-  {
-    id: "gpt-5.3-codex",
-    name: "GPT-5.3 Codex",
-    kind: "chat",
-    reasoningLevels: ["low", "medium", "high"],
-    defaultReasoningLevel: "medium",
-    supportsReasoningSummaries: true,
-  },
-  {
-    id: "gpt-5.2-codex",
-    name: "GPT-5.2 Codex",
-    kind: "chat",
-    reasoningLevels: ["low", "medium", "high"],
-    defaultReasoningLevel: "medium",
-    supportsReasoningSummaries: true,
-  },
-  {
-    id: "o4-mini",
-    name: "o4-mini",
-    kind: "chat",
-    reasoningLevels: ["low", "medium", "high"],
-    defaultReasoningLevel: "medium",
-  },
-];
-
 function asThinkingLevel(value: unknown): ThinkingLevel | null {
   if (typeof value !== "string") return null;
   const v = value.toLowerCase() as ThinkingLevel;
@@ -173,12 +115,6 @@ function extractReasoningMeta(row: Record<string, unknown>): {
     supportsReasoningSummaries: supportsReasoningSummaries || undefined,
   };
 }
-
-const IMAGE_MODEL: ProviderModel = {
-  id: CODEX_IMAGE_MODEL,
-  name: "GPT Image 2",
-  kind: "image",
-};
 
 function envBase(): string | null {
   const value = process.env.FAILURE_CODEX_BASE_URL?.trim();
@@ -242,16 +178,23 @@ export function codexAuthHeaders(
   };
 }
 
-function withImageModel(models: ProviderModel[]): ProviderModel[] {
+/** Dedupe + normalize kinds/names from the live catalog only (no injected fakes). */
+function normalizeLiveModels(models: ProviderModel[]): ProviderModel[] {
   const seen = new Set<string>();
   const out: ProviderModel[] = [];
-  for (const model of [...models, IMAGE_MODEL]) {
+  for (const model of models) {
     if (seen.has(model.id)) continue;
     seen.add(model.id);
+    const isImage =
+      model.kind === "image" ||
+      model.id === CODEX_IMAGE_MODEL ||
+      /image/i.test(model.id);
     out.push({
       ...model,
-      kind: model.kind || (model.id === CODEX_IMAGE_MODEL ? "image" : "chat"),
-      name: model.name || (model.id === CODEX_IMAGE_MODEL ? "GPT Image 2" : model.id),
+      kind: model.kind || (isImage ? "image" : "chat"),
+      name:
+        model.name ||
+        (model.id === CODEX_IMAGE_MODEL ? "GPT Image 2" : model.id),
     });
   }
   return out;
@@ -446,7 +389,7 @@ async function fetchUpstream(
 export async function listCodexModels(secret: StoredProviderSecret): Promise<{
   models: ProviderModel[];
   transport: CodexTransport;
-  source: "live" | "fallback";
+  source: "live" | "error";
   warning?: string;
 }> {
   const clientVersion = await resolveCodexClientVersion();
@@ -459,25 +402,26 @@ export async function listCodexModels(secret: StoredProviderSecret): Promise<{
     if (!res.ok) {
       throw new Error(`Upstream models failed: ${res.status} ${text.slice(0, 240)}`);
     }
-    const models = withImageModel(pickModelIds(JSON.parse(text)));
+    const models = normalizeLiveModels(pickModelIds(JSON.parse(text)));
     if (!models.length) {
       return {
-        models: withImageModel(FALLBACK_CHAT_MODELS),
+        models: [],
         transport,
-        source: "fallback",
-        warning: "Upstream returned an empty catalog; using fallback models + GPT Image 2.",
+        source: "error",
+        warning:
+          "Upstream returned an empty catalog — no guessed models will be shown.",
       };
     }
     return { models, transport, source: "live" };
   } catch (error) {
     return {
-      models: withImageModel(FALLBACK_CHAT_MODELS),
+      models: [],
       transport: envBase() ? "relay" : "openai_api",
-      source: "fallback",
+      source: "error",
       warning:
         error instanceof Error
-          ? error.message
-          : "Live model fetch failed; using fallback models + GPT Image 2.",
+          ? `${error.message} — no guessed models will be shown.`
+          : "Live model fetch failed — no guessed models will be shown.",
     };
   }
 }
