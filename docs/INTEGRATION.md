@@ -241,11 +241,9 @@ Ask the user to reconnect that provider at https://oauth.failure.fail/account/pr
 
 Failure’s `/api/chat` and `/api/images` are **dashboard session helpers** for testing. Integrating apps should call **provider endpoints directly** (from your server) using the credential package from userinfo.
 
-### Codex / ChatGPT (`protocol: "codex_backend"`)
+### Codex (`protocol: "codex_backend"`)
 
-Same backend protocol for both.
-
-**Required headers**
+Official Codex Desktop / CLI OAuth. Send Codex CLI identity headers:
 
 ```http
 Authorization: Bearer <accessToken>
@@ -253,6 +251,22 @@ chatgpt-account-id: <accountId>
 originator: codex_cli_rs
 Accept: application/json
 ```
+
+### ChatGPT (`protocol: "openai_oauth"`)
+
+**Sign in with ChatGPT** via [openai-oauth](https://github.com/EvanZhouDev/openai-oauth) (`@openai-oauth/react`). Same upstream URL path (`/backend-api/codex` historically), but **do not** send Codex CLI `originator` / `codex_cli_rs` User-Agent — match `@openai-oauth/core` `applyAuthHeaders`:
+
+```http
+Authorization: Bearer <accessToken>
+chatgpt-account-id: <accountId>
+Accept: application/json
+```
+
+Optional: `X-OpenAI-Fedramp: true` when the account is FedRAMP. ChatGPT credential packages include `sdk.docs` pointing at the openai-oauth repo.
+
+### Shared subscription Responses API
+
+Both Codex and ChatGPT talk to the ChatGPT subscription Responses surface.
 
 **Endpoints** (from `credentials.endpoints`)
 
@@ -267,19 +281,18 @@ Accept: application/json
 
 > **Cloudflare Workers cannot call `chatgpt.com` directly** (CF challenge). Call from a normal Node/VM host, or use the relay URL from credentials.
 
-#### Chat example
+#### Chat example (ChatGPT / openai-oauth headers)
 
-Subscription Codex expects `input` as a **list**, not a string:
+Subscription Responses expects `input` as a **list**, not a string:
 
 ```js
-const cred = providers.find((p) => p.provider === "codex").credentials;
+const cred = providers.find((p) => p.provider === "chatgpt").credentials;
 
 const res = await fetch(cred.endpoints.responses, {
   method: "POST",
   headers: {
     Authorization: `Bearer ${cred.accessToken}`,
     "chatgpt-account-id": cred.accountId,
-    originator: "codex_cli_rs",
     "Content-Type": "application/json",
     Accept: "text/event-stream",
   },
@@ -304,6 +317,8 @@ const res = await fetch(cred.endpoints.responses, {
 });
 ```
 
+For **Codex**, add `originator: "codex_cli_rs"` and use the Codex credential package.
+
 **Think blocks** appear as output items:
 
 ```json
@@ -324,13 +339,12 @@ await fetch(cred.endpoints.imageGenerations, {
   headers: {
     Authorization: `Bearer ${cred.accessToken}`,
     "chatgpt-account-id": cred.accountId,
-    originator: "codex_cli_rs",
     "Content-Type": "application/json",
+    // Codex only: also send originator: "codex_cli_rs"
   },
   body: JSON.stringify({
     model: "gpt-image-2",
     prompt: "A ceramic mug on oak",
-    // follow live Codex image payload fields your account accepts
   }),
 });
 ```
@@ -476,6 +490,8 @@ export async function userinfo(accessToken: string, origin = "https://oauth.fail
 - Store `code_verifier` / tokens server-side when possible
 - Treat provider `accessToken` / `setupToken` as secrets — do not leak to the browser unless intentional
 - Always send `chatgpt-account-id` for Codex/ChatGPT
+- For **ChatGPT**, use `protocol: "openai_oauth"` headers (no Codex `originator`) — see [openai-oauth](https://github.com/EvanZhouDev/openai-oauth)
+- For **Codex**, send `originator: codex_cli_rs`
 - Claude Code OAuth carries **account-deletion risk** — require explicit user acknowledgement in your product
 - Redirect URIs must match exactly (including scheme/host/path)
 - Discovery may advertise revoke/jwks endpoints that are not implemented yet

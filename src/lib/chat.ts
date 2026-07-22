@@ -181,7 +181,10 @@ export async function listProviderModels(input: {
   switch (input.provider) {
     case "codex":
     case "chatgpt": {
-      const result = await listCodexModels(secret);
+      const result = await listCodexModels(
+        secret,
+        input.provider === "chatgpt" ? "chatgpt" : "codex",
+      );
       return {
         models: result.models,
         warning: result.warning,
@@ -392,12 +395,14 @@ export async function runProviderChat(input: {
         model: input.model,
         thinkingLevel: input.thinkingLevel,
         includeThinking: input.includeThinking,
+        flavor: "codex",
       });
     case "chatgpt":
       return chatCodex(secret, input.prompt, "ChatGPT", {
         model: input.model,
         thinkingLevel: input.thinkingLevel,
         includeThinking: input.includeThinking,
+        flavor: "chatgpt",
       });
     case "claude":
       return chatClaude(secret, input.prompt, input.model, {

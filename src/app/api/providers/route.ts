@@ -40,8 +40,10 @@ const actionSchema = z.discriminatedUnion("action", [
     action: z.literal("chatgpt_connect"),
     accessToken: z.string().min(1),
     refreshToken: z.string().optional(),
+    idToken: z.string().optional(),
     expiresAt: z.number().optional(),
     accountId: z.string().optional(),
+    isFedRamp: z.boolean().optional(),
   }),
   z.object({
     action: z.literal("claude_connect"),

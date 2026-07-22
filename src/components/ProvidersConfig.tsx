@@ -136,10 +136,12 @@ export function ProvidersConfig({
           action: "chatgpt_connect",
           accessToken: session.accessToken,
           refreshToken: session.refreshToken,
+          idToken: session.idToken,
           expiresAt: session.expiresAt
             ? Date.parse(session.expiresAt)
             : undefined,
           accountId: session.accountId,
+          isFedRamp: session.isFedRamp,
         });
         setMessage("ChatGPT connected automatically.");
         setActive(null);

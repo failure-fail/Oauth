@@ -1,22 +1,27 @@
 import { randomUUID } from "crypto";
 import {
   CLAUDE_OAUTH,
+  CHATGPT_OAUTH,
   CODEX_OAUTH,
   GROK_OAUTH,
+  OPENAI_OAUTH,
   randomToken,
   type ProviderId,
 } from "./config";
 import { encryptSecret, decryptSecret, pkceChallengeFromVerifier } from "./crypto";
 import { db, type ProviderConnection } from "./db";
+import { refreshOpenAIOAuthTokens } from "@openai-oauth/core";
 
 export type StoredProviderSecret = {
   type: string;
   accessToken?: string;
   refreshToken?: string;
+  idToken?: string;
   expiresAt?: number;
   accountId?: string;
   accountKey?: string;
   setupToken?: string;
+  isFedRamp?: boolean;
   raw?: Record<string, unknown>;
 };
 
@@ -47,9 +52,19 @@ export function chatgptAccountIdFromToken(token: string): string | null {
   const payload = decodeJwtPayload(token);
   if (!payload) return null;
   const auth = payload["https://api.openai.com/auth"] as
-    | { chatgpt_account_id?: string }
+    | { chatgpt_account_id?: string; chatgpt_account_is_fedramp?: boolean }
     | undefined;
   return auth?.chatgpt_account_id || null;
+}
+
+export function chatgptIsFedRampFromToken(token?: string): boolean {
+  if (!token) return false;
+  const payload = decodeJwtPayload(token);
+  if (!payload) return false;
+  const auth = payload["https://api.openai.com/auth"] as
+    | { chatgpt_account_is_fedramp?: boolean }
+    | undefined;
+  return auth?.chatgpt_account_is_fedramp === true;
 }
 
 function tokenNeedsRefresh(secret: StoredProviderSecret): boolean {
@@ -66,41 +81,25 @@ function tokenNeedsRefresh(secret: StoredProviderSecret): boolean {
   return Date.now() >= secret.expiresAt - TOKEN_REFRESH_SKEW_MS;
 }
 
-async function refreshOpenAiCodexTokens(
+async function refreshOpenAiTokens(
   refreshToken: string,
 ): Promise<StoredProviderSecret> {
-  const body = new URLSearchParams({
-    grant_type: "refresh_token",
-    refresh_token: refreshToken,
-    client_id: CODEX_OAUTH.clientId,
+  // Use @openai-oauth/core so ChatGPT refresh matches Sign in with ChatGPT
+  const json = await refreshOpenAIOAuthTokens({
+    refreshToken,
+    clientId: OPENAI_OAUTH.clientId,
+    issuer: OPENAI_OAUTH.issuer,
+    tokenUrl: OPENAI_OAUTH.tokenUrl,
   });
-  const res = await fetch(CODEX_OAUTH.tokenUrl, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      Accept: "application/json",
-    },
-    body,
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`OpenAI token refresh failed: ${res.status} ${text.slice(0, 300)}`);
-  }
-  const json = (await res.json()) as {
-    access_token: string;
-    refresh_token?: string;
-    expires_in?: number;
-  };
-  const accountId = chatgptAccountIdFromToken(json.access_token);
   return {
     type: "openai_oauth_refreshed",
-    accessToken: json.access_token,
-    refreshToken: json.refresh_token || refreshToken,
-    expiresAt: json.expires_in
-      ? Date.now() + json.expires_in * 1000
-      : undefined,
-    accountId: accountId || undefined,
-    raw: json as unknown as Record<string, unknown>,
+    accessToken: json.accessToken,
+    refreshToken: json.refreshToken || refreshToken,
+    idToken: json.idToken,
+    expiresAt: json.expiresIn ? Date.now() + json.expiresIn * 1000 : undefined,
+    accountId: json.accountId || undefined,
+    isFedRamp: json.isFedRamp,
+    raw: json.raw as Record<string, unknown>,
   };
 }
 
@@ -152,7 +151,7 @@ export async function ensureFreshConnection(
     tokenNeedsRefresh(secret) &&
     secret.refreshToken
   ) {
-    const refreshed = await refreshOpenAiCodexTokens(secret.refreshToken);
+    const refreshed = await refreshOpenAiTokens(secret.refreshToken);
     secret = {
       ...secret,
       ...refreshed,
@@ -163,6 +162,11 @@ export async function ensureFreshConnection(
         (typeof secret.raw?.accountId === "string"
           ? secret.raw.accountId
           : undefined),
+      idToken: refreshed.idToken || secret.idToken,
+      isFedRamp:
+        refreshed.isFedRamp ??
+        secret.isFedRamp ??
+        chatgptIsFedRampFromToken(refreshed.idToken || refreshed.accessToken),
     };
     conn = await db.upsertConnection({
       userId: conn.userId,
@@ -213,18 +217,18 @@ export function exposeProviderCredentials(
   secret: StoredProviderSecret,
 ) {
   switch (provider) {
-    case "codex":
-    case "chatgpt": {
-      // Lazy import avoided — keep endpoints helper local to prevent cycles
+    case "codex": {
       const relay = process.env.FAILURE_CODEX_BASE_URL?.trim().replace(/\/$/, "");
-      const base = relay || "https://chatgpt.com/backend-api/codex";
+      const base = relay || OPENAI_OAUTH.baseUrl;
       return {
         type: secret.type,
         protocol: "codex_backend",
         accessToken: secret.accessToken ?? null,
         refreshToken: secret.refreshToken ?? null,
+        idToken: secret.idToken ?? null,
         expiresAt: secret.expiresAt ?? null,
         accountId: secret.accountId ?? null,
+        isFedRamp: secret.isFedRamp ?? null,
         capabilities: {
           chat: true,
           imageGeneration: true,
@@ -266,10 +270,81 @@ export function exposeProviderCredentials(
         oauth: {
           clientId: CODEX_OAUTH.clientId,
           scope: CODEX_OAUTH.scope,
+          originator: CODEX_OAUTH.originator,
         },
         note: relay
           ? "FAILURE_CODEX_BASE_URL relay is configured for Cloudflare Worker egress."
           : "Direct chatgpt.com calls are blocked from Cloudflare Workers; apps should call from non-Worker hosts or a relay.",
+      };
+    }
+    case "chatgpt": {
+      // Align with https://github.com/EvanZhouDev/openai-oauth — ChatGPT, not Codex CLI.
+      const relay = process.env.FAILURE_CODEX_BASE_URL?.trim().replace(/\/$/, "");
+      const base = relay || CHATGPT_OAUTH.baseUrl;
+      return {
+        type: secret.type,
+        protocol: "openai_oauth",
+        accessToken: secret.accessToken ?? null,
+        refreshToken: secret.refreshToken ?? null,
+        idToken: secret.idToken ?? null,
+        expiresAt: secret.expiresAt ?? null,
+        accountId: secret.accountId ?? null,
+        isFedRamp: secret.isFedRamp ?? null,
+        capabilities: {
+          chat: true,
+          imageGeneration: true,
+          imageEditing: true,
+          imageModel: CHATGPT_OAUTH.imageModel,
+          reasoning: true,
+          thinkingLevels: ["none", "minimal", "low", "medium", "high", "xhigh"],
+          defaultThinkingLevel: "medium",
+          thinkBlocks: {
+            include: ["reasoning.encrypted_content"],
+            summary: ["auto", "concise", "detailed"],
+            outputItemType: "reasoning",
+            requestShape: {
+              reasoning: { effort: "<thinkingLevel>", summary: "detailed" },
+              include: ["reasoning.encrypted_content"],
+              store: false,
+              stream: true,
+            },
+            responseShape: {
+              type: "reasoning",
+              summary: [{ type: "summary_text", text: "..." }],
+              encrypted_content: "<opaque>",
+            },
+          },
+        },
+        endpoints: {
+          models: `${base}/models`,
+          responses: `${base}/responses`,
+          imageGenerations: `${base}/images/generations`,
+          imageEdits: `${base}/images/edits`,
+          token: CHATGPT_OAUTH.tokenUrl,
+          openaiApiFallback: "https://api.openai.com/v1",
+        },
+        requiredHeaders: {
+          Authorization: "Bearer <accessToken>",
+          "chatgpt-account-id": "<accountId>",
+          // Do NOT send Codex CLI originator — matches @openai-oauth/core applyAuthHeaders
+        },
+        optionalHeaders: {
+          "X-OpenAI-Fedramp": "true when account is FedRAMP",
+        },
+        oauth: {
+          clientId: CHATGPT_OAUTH.clientId,
+          scope: CHATGPT_OAUTH.scope,
+          issuer: CHATGPT_OAUTH.issuer,
+        },
+        sdk: {
+          npm: CHATGPT_OAUTH.sdk,
+          docs: CHATGPT_OAUTH.sdkDocs,
+        },
+        note:
+          "ChatGPT via Sign in with ChatGPT (openai-oauth). Upstream path is /backend-api/codex historically; use openai_oauth headers (no Codex originator)." +
+          (relay
+            ? " FAILURE_CODEX_BASE_URL relay is configured for Cloudflare Worker egress."
+            : " Direct chatgpt.com calls are blocked from Cloudflare Workers; use a non-Worker host or relay."),
       };
     }
     case "claude":
@@ -503,8 +578,10 @@ export async function connectChatGptTokens(
   tokens: {
     accessToken: string;
     refreshToken?: string;
+    idToken?: string;
     expiresAt?: number;
     accountId?: string;
+    isFedRamp?: boolean;
   },
 ) {
   const accountId =
@@ -514,6 +591,10 @@ export async function connectChatGptTokens(
       "ChatGPT session missing account id — re-run Sign in with ChatGPT",
     );
   }
+  const isFedRamp =
+    tokens.isFedRamp ??
+    (chatgptIsFedRampFromToken(tokens.idToken) ||
+      chatgptIsFedRampFromToken(tokens.accessToken));
   return await db.upsertConnection({
     userId,
     provider: "chatgpt",
@@ -523,13 +604,16 @@ export async function connectChatGptTokens(
       type: "chatgpt_oauth",
       accessToken: tokens.accessToken,
       refreshToken: tokens.refreshToken,
+      idToken: tokens.idToken,
       expiresAt: tokens.expiresAt,
       accountId,
+      isFedRamp,
       raw: tokens as unknown as Record<string, unknown>,
     }),
     meta: {
       method: "openai_oauth",
       source: "https://github.com/EvanZhouDev/openai-oauth",
+      sdk: "@openai-oauth/react",
     },
   });
 }

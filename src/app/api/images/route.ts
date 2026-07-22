@@ -47,10 +47,11 @@ export async function POST(req: Request) {
       );
     }
     const { secret } = await ensureFreshConnection(conn);
+    const flavor = body.provider === "chatgpt" ? "chatgpt" : "codex";
     const result =
       body.action === "generate"
-        ? await generateCodexImage(secret, body)
-        : await editCodexImage(secret, body);
+        ? await generateCodexImage(secret, { ...body, flavor })
+        : await editCodexImage(secret, { ...body, flavor });
     return NextResponse.json({
       provider: body.provider,
       action: body.action,

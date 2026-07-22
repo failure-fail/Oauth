@@ -23,6 +23,7 @@ const ALLOW_HEADERS = new Set([
   "content-type",
   "accept",
   "originator",
+  "user-agent",
   "openai-beta",
   "x-openai-fedramp",
   "x-openai-internal-codex-responses-lite",
@@ -53,8 +54,8 @@ const server = http.createServer(async (req, res) => {
   const target = new URL(req.url, "http://relay.local");
   const upstreamUrl = `${UPSTREAM}${target.pathname}${target.search}`;
 
+  // Do not force Codex CLI UA — ChatGPT/openai-oauth requests omit originator/UA.
   const headers = {
-    "User-Agent": "codex_cli_rs/0.144.1",
     Accept: req.headers.accept || "application/json",
   };
   for (const [key, value] of Object.entries(req.headers)) {
@@ -62,6 +63,9 @@ const server = http.createServer(async (req, res) => {
     const lower = key.toLowerCase();
     if (!ALLOW_HEADERS.has(lower)) continue;
     headers[key] = Array.isArray(value) ? value.join(",") : value;
+  }
+  if (!Object.keys(headers).some((k) => k.toLowerCase() === "user-agent")) {
+    headers["User-Agent"] = "failure-ai-oauth-relay/1.0";
   }
 
   const chunks = [];

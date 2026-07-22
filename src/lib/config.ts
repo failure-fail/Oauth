@@ -30,23 +30,54 @@ export function randomToken(bytes = 32) {
   return randomBytes(bytes).toString("base64url");
 }
 
-export const CODEX_OAUTH = {
-  // Official Codex CLI / Desktop public OAuth client
+export const OPENAI_OAUTH = {
+  // Shared OpenAI OAuth client used by Codex CLI and openai-oauth / Sign in with ChatGPT
+  // https://github.com/EvanZhouDev/openai-oauth
   clientId: "app_EMoamEEZ73f0CkXaXp7hrann",
+  issuer: "https://auth.openai.com",
   authorizeUrl: "https://auth.openai.com/oauth/authorize",
   tokenUrl: "https://auth.openai.com/oauth/token",
+  scope: "openid profile email offline_access",
+  // Historical path name on chatgpt.com — used by both Codex CLI and openai-oauth
+  baseUrl: "https://chatgpt.com/backend-api/codex",
+  sdkDocs: "https://github.com/EvanZhouDev/openai-oauth",
+};
+
+export const CODEX_OAUTH = {
+  // Official Codex CLI / Desktop public OAuth client (same client id as OPENAI_OAUTH)
+  clientId: OPENAI_OAUTH.clientId,
+  authorizeUrl: OPENAI_OAUTH.authorizeUrl,
+  tokenUrl: OPENAI_OAUTH.tokenUrl,
   // Desktop Codex listens on this loopback callback (same as Codex CLI/Desktop)
   redirectUri: "http://localhost:1455/auth/callback",
   port: 1455,
   // Official Codex login scope — extra scopes break token usability for models
-  scope: "openid profile email offline_access",
+  scope: OPENAI_OAUTH.scope,
   originator: "codex_cli_rs",
-  modelsUrl: "https://chatgpt.com/backend-api/codex/models",
-  responsesUrl: "https://chatgpt.com/backend-api/codex/responses",
-  imageGenerationsUrl:
-    "https://chatgpt.com/backend-api/codex/images/generations",
-  imageEditsUrl: "https://chatgpt.com/backend-api/codex/images/edits",
+  modelsUrl: `${OPENAI_OAUTH.baseUrl}/models`,
+  responsesUrl: `${OPENAI_OAUTH.baseUrl}/responses`,
+  imageGenerationsUrl: `${OPENAI_OAUTH.baseUrl}/images/generations`,
+  imageEditsUrl: `${OPENAI_OAUTH.baseUrl}/images/edits`,
   imageModel: "gpt-image-2",
+};
+
+/** ChatGPT via Sign in with ChatGPT (@openai-oauth/react) — not Codex CLI identity. */
+export const CHATGPT_OAUTH = {
+  clientId: OPENAI_OAUTH.clientId,
+  issuer: OPENAI_OAUTH.issuer,
+  authorizeUrl: OPENAI_OAUTH.authorizeUrl,
+  tokenUrl: OPENAI_OAUTH.tokenUrl,
+  scope: OPENAI_OAUTH.scope,
+  baseUrl: OPENAI_OAUTH.baseUrl,
+  modelsUrl: `${OPENAI_OAUTH.baseUrl}/models`,
+  responsesUrl: `${OPENAI_OAUTH.baseUrl}/responses`,
+  imageGenerationsUrl: `${OPENAI_OAUTH.baseUrl}/images/generations`,
+  imageEditsUrl: `${OPENAI_OAUTH.baseUrl}/images/edits`,
+  imageModel: "gpt-image-2",
+  sdk: "@openai-oauth/react",
+  sdkDocs: OPENAI_OAUTH.sdkDocs,
+  // openai-oauth applyAuthHeaders does NOT send Codex CLI originator / UA
+  requiredHeaderNames: ["Authorization", "chatgpt-account-id"] as const,
 };
 
 export const GROK_OAUTH = {

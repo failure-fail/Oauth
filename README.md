@@ -83,11 +83,14 @@ curl -X POST https://YOUR_HOST/api/oauth/token \
   -d 'code_verifier=PKCE_VERIFIER'
 ```
 
-UserInfo (with `providers` scope) returns linked Codex / ChatGPT / Claude / Grok credential packages for the signed-in user. Each package includes refreshed tokens plus the live endpoints and required headers for that provider (Codex/ChatGPT → `chatgpt.com/backend-api/codex` or a `FAILURE_CODEX_BASE_URL` relay, Claude → Anthropic OAuth headers, Grok → `cli-chat-proxy.grok.com`).
+UserInfo (with `providers` scope) returns linked Codex / ChatGPT / Claude / Grok credential packages for the signed-in user. Each package includes refreshed tokens plus the live endpoints and required headers for that provider:
 
-Codex/ChatGPT packages also advertise:
-- GPT Image 2 generate/edit endpoints
-- Thinking levels (`reasoning.effort`) and think-block response shape (`reasoning` items + `reasoning.encrypted_content`)
+- **Codex** → `protocol: "codex_backend"` with `originator: codex_cli_rs`
+- **ChatGPT** → `protocol: "openai_oauth"` ([openai-oauth](https://github.com/EvanZhouDev/openai-oauth) / Sign in with ChatGPT) — **no** Codex originator
+- Claude → Anthropic OAuth headers
+- Grok → `cli-chat-proxy.grok.com`
+
+Codex/ChatGPT packages also advertise GPT Image 2 and thinking/think-block shapes.
 
 ### Cloudflare Workers note
 

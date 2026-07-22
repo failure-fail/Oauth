@@ -1,6 +1,7 @@
 import { CODEX_OAUTH } from "./config";
 import {
   chatgptAccountIdFromToken,
+  chatgptIsFedRampFromToken,
   type StoredProviderSecret,
 } from "./providers";
 
@@ -176,16 +177,41 @@ export function codexAuthHeaders(
   secret: StoredProviderSecret,
   extra?: Record<string, string>,
 ): Record<string, string> {
+  return openAiChatAuthHeaders(secret, "codex", extra);
+}
+
+/**
+ * Auth headers for ChatGPT subscription Responses API.
+ * - codex: Codex CLI identity (originator + UA)
+ * - chatgpt: openai-oauth / Sign in with ChatGPT (no Codex originator)
+ *   https://github.com/EvanZhouDev/openai-oauth
+ */
+export type OpenAiChatFlavor = "codex" | "chatgpt";
+
+export function openAiChatAuthHeaders(
+  secret: StoredProviderSecret,
+  flavor: OpenAiChatFlavor,
+  extra?: Record<string, string>,
+): Record<string, string> {
   const token = secret.accessToken;
   if (!token) throw new Error("Access token missing");
-  return {
+  const headers: Record<string, string> = {
     Authorization: `Bearer ${token}`,
     "chatgpt-account-id": accountId(secret),
     Accept: "application/json",
-    "User-Agent": `codex_cli_rs/${CODEX_OAUTH.originator === "codex_cli_rs" ? "0.144.1" : "0.144.1"}`,
-    originator: CODEX_OAUTH.originator,
-    ...extra,
   };
+  if (flavor === "codex") {
+    headers["User-Agent"] = "codex_cli_rs/0.144.1";
+    headers.originator = CODEX_OAUTH.originator;
+  }
+  const isFedRamp =
+    secret.isFedRamp === true ||
+    chatgptIsFedRampFromToken(secret.idToken) ||
+    chatgptIsFedRampFromToken(secret.accessToken);
+  if (isFedRamp) {
+    headers["X-OpenAI-Fedramp"] = "true";
+  }
+  return { ...headers, ...extra };
 }
 
 const IMAGE_MODEL: ProviderModel = {
@@ -367,6 +393,7 @@ async function fetchUpstream(
   secret: StoredProviderSecret,
   path: string,
   init: RequestInit & { preferJson?: boolean } = {},
+  flavor: OpenAiChatFlavor = "codex",
 ): Promise<{
   res: Response;
   text: string;
@@ -378,7 +405,7 @@ async function fetchUpstream(
     const url = `${candidate.baseUrl}${path.startsWith("/") ? path : `/${path}`}`;
     try {
       const headers = new Headers(init.headers || {});
-      const auth = codexAuthHeaders(secret);
+      const auth = openAiChatAuthHeaders(secret, flavor);
       for (const [k, v] of Object.entries(auth)) {
         if (!headers.has(k)) headers.set(k, v);
       }
@@ -402,7 +429,10 @@ async function fetchUpstream(
   );
 }
 
-export async function listCodexModels(secret: StoredProviderSecret): Promise<{
+export async function listCodexModels(
+  secret: StoredProviderSecret,
+  flavor: OpenAiChatFlavor = "codex",
+): Promise<{
   models: ProviderModel[];
   transport: CodexTransport;
   source: "live" | "error";
@@ -414,18 +444,21 @@ export async function listCodexModels(secret: StoredProviderSecret): Promise<{
       secret,
       `/models?client_version=${encodeURIComponent(clientVersion)}`,
       { method: "GET" },
+      flavor,
     );
     if (!res.ok) {
       throw new Error(`Upstream models failed: ${res.status} ${text.slice(0, 240)}`);
     }
     const models = normalizeLiveModels(pickModelIds(JSON.parse(text)));
-    if (!models.length) {
+    const chatModels = models.filter((m) => m.kind !== "image");
+    if (!chatModels.length) {
       return {
-        models: [],
+        models, // still includes forced gpt-image-2
         transport,
-        source: "error",
-        warning:
-          "Upstream returned an empty catalog — no guessed models will be shown.",
+        source: models.length ? "live" : "error",
+        warning: models.length
+          ? "Upstream chat catalog was empty; GPT Image 2 is still available."
+          : "Upstream returned an empty catalog — no models to show.",
       };
     }
     return { models, transport, source: "live" };
@@ -774,9 +807,11 @@ export async function chatCodex(
     model?: string;
     thinkingLevel?: ThinkingLevel;
     includeThinking?: boolean;
+    flavor?: OpenAiChatFlavor;
   },
 ) {
-  const listed = await listCodexModels(secret);
+  const flavor = options?.flavor || "codex";
+  const listed = await listCodexModels(secret, flavor);
   const selected =
     options?.model &&
     listed.models.some((m) => m.id === options.model && m.kind !== "image")
@@ -814,14 +849,19 @@ export async function chatCodex(
     body.reasoning = { effort: "none" };
   }
 
-  const { res, text, transport } = await fetchUpstream(secret, "/responses", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "text/event-stream",
+  const { res, text, transport } = await fetchUpstream(
+    secret,
+    "/responses",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "text/event-stream",
+      },
+      body: JSON.stringify(body),
     },
-    body: JSON.stringify(body),
-  });
+    flavor,
+  );
   if (!res.ok) {
     throw new Error(
       `${label} chat failed (${selected} via ${transport}): ${res.status} ${text.slice(0, 400)}`,
@@ -886,8 +926,10 @@ export async function generateCodexImage(
     quality?: string;
     background?: string;
     n?: number;
+    flavor?: OpenAiChatFlavor;
   },
 ) {
+  const flavor = input.flavor || "codex";
   const body = JSON.stringify({
     model: CODEX_IMAGE_MODEL,
     prompt: input.prompt,
@@ -897,7 +939,7 @@ export async function generateCodexImage(
     ...(input.n ? { n: input.n } : {}),
   });
 
-  // Prefer native Codex image endpoints; openai_api fallback uses same path shape under /v1
+  // Prefer native image endpoints; openai_api fallback uses same path shape under /v1
   const { res, text, transport } = await fetchUpstream(
     secret,
     "/images/generations",
@@ -906,12 +948,13 @@ export async function generateCodexImage(
       headers: { "Content-Type": "application/json" },
       body,
     },
+    flavor,
   );
 
   if (!res.ok) {
     // Fallback: Responses API + image_generation tool on host chat model
     if (res.status === 404 || res.status === 405 || res.status === 400) {
-      return generateCodexImageViaResponses(secret, input);
+      return generateCodexImageViaResponses(secret, input, flavor);
     }
     throw new Error(
       `Image generation failed via ${transport}: ${res.status} ${text.slice(0, 400)}`,
@@ -943,8 +986,9 @@ async function generateCodexImageViaResponses(
     quality?: string;
     background?: string;
   },
+  flavor: OpenAiChatFlavor = "codex",
 ) {
-  const listed = await listCodexModels(secret);
+  const listed = await listCodexModels(secret, flavor);
   const host = preferModel(listed.models, [
     "gpt-5.6-sol",
     "gpt-5.6",
@@ -961,7 +1005,10 @@ async function generateCodexImageViaResponses(
 
   const body = JSON.stringify({
     model: host,
-    instructions: "You are Codex, OpenAI's coding agent.",
+    instructions:
+      flavor === "chatgpt"
+        ? "You are a helpful assistant."
+        : "You are Codex, OpenAI's coding agent.",
     input: userInputList(input.prompt),
     tools: [tool],
     tool_choice: { type: "image_generation" },
@@ -969,14 +1016,19 @@ async function generateCodexImageViaResponses(
     stream: true,
   });
 
-  const { res, text, transport } = await fetchUpstream(secret, "/responses", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "text/event-stream",
+  const { res, text, transport } = await fetchUpstream(
+    secret,
+    "/responses",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "text/event-stream",
+      },
+      body,
     },
-    body,
-  });
+    flavor,
+  );
   if (!res.ok) {
     throw new Error(
       `Image generation (responses) failed via ${transport}: ${res.status} ${text.slice(0, 400)}`,
@@ -1027,10 +1079,12 @@ export async function editCodexImage(
     quality?: string;
     background?: string;
     n?: number;
+    flavor?: OpenAiChatFlavor;
   },
 ) {
   if (!input.images.length) throw new Error("At least one reference image is required");
   if (input.images.length > 5) throw new Error("At most 5 reference images are supported");
+  const flavor = input.flavor || "codex";
 
   const body = JSON.stringify({
     model: CODEX_IMAGE_MODEL,
@@ -1042,15 +1096,20 @@ export async function editCodexImage(
     ...(input.n ? { n: input.n } : {}),
   });
 
-  const { res, text, transport } = await fetchUpstream(secret, "/images/edits", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body,
-  });
+  const { res, text, transport } = await fetchUpstream(
+    secret,
+    "/images/edits",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+    },
+    flavor,
+  );
 
   if (!res.ok) {
     // Responses API edit via input_image references
-    return editCodexImageViaResponses(secret, input);
+    return editCodexImageViaResponses(secret, input, flavor);
   }
   const parsed = safeJson(text);
   const images = extractImageB64(parsed);
@@ -1071,8 +1130,9 @@ async function editCodexImageViaResponses(
     quality?: string;
     background?: string;
   },
+  flavor: OpenAiChatFlavor = "codex",
 ) {
-  const listed = await listCodexModels(secret);
+  const listed = await listCodexModels(secret, flavor);
   const host = preferModel(listed.models, [
     "gpt-5.6-sol",
     "gpt-5.6",
@@ -1096,7 +1156,10 @@ async function editCodexImageViaResponses(
 
   const body = JSON.stringify({
     model: host,
-    instructions: "You are Codex, OpenAI's coding agent.",
+    instructions:
+      flavor === "chatgpt"
+        ? "You are a helpful assistant."
+        : "You are Codex, OpenAI's coding agent.",
     input: [{ type: "message", role: "user", content }],
     tools: [tool],
     tool_choice: { type: "image_generation" },
@@ -1104,14 +1167,19 @@ async function editCodexImageViaResponses(
     stream: true,
   });
 
-  const { res, text, transport } = await fetchUpstream(secret, "/responses", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "text/event-stream",
+  const { res, text, transport } = await fetchUpstream(
+    secret,
+    "/responses",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "text/event-stream",
+      },
+      body,
     },
-    body,
-  });
+    flavor,
+  );
   if (!res.ok) {
     throw new Error(
       `Image edit failed via ${transport}: ${res.status} ${text.slice(0, 400)}`,
