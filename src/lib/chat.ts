@@ -7,7 +7,9 @@ import {
   chatCodex,
   listCodexModels,
   type ProviderModel,
+  type ThinkBlock,
   type ThinkingLevel,
+  type ThinkingPayload,
 } from "./codex-client";
 import {
   ensureFreshConnection,
@@ -105,6 +107,41 @@ function preferModel(models: ProviderModel[], hints: string[]): string {
   return models[0].id;
 }
 
+const CLAUDE_THINKING_LEVELS: ThinkingLevel[] = [
+  "none",
+  "low",
+  "medium",
+  "high",
+];
+
+function withClaudeThinkingMeta(models: ProviderModel[]): ProviderModel[] {
+  return models.map((model) => ({
+    ...model,
+    reasoningLevels: model.reasoningLevels || CLAUDE_THINKING_LEVELS,
+    defaultReasoningLevel: model.defaultReasoningLevel || "medium",
+    supportsReasoningSummaries: true,
+  }));
+}
+
+function claudeThinkingBudget(level?: ThinkingLevel): number | null {
+  switch (level) {
+    case undefined:
+    case "medium":
+      return 4096;
+    case "low":
+    case "minimal":
+      return 1024;
+    case "high":
+    case "xhigh":
+    case "max":
+      return 10000;
+    case "none":
+      return null;
+    default:
+      return 4096;
+  }
+}
+
 async function listClaudeModels(secret: StoredProviderSecret): Promise<ProviderModel[]> {
   const token = secret.setupToken || secret.accessToken;
   if (!token) throw new Error("Claude token missing");
@@ -115,7 +152,7 @@ async function listClaudeModels(secret: StoredProviderSecret): Promise<ProviderM
     const text = await res.text();
     throw new Error(`Failed to fetch Claude models: ${res.status} ${text.slice(0, 300)}`);
   }
-  return pickModelIds(await res.json());
+  return withClaudeThinkingMeta(pickModelIds(await res.json()));
 }
 
 async function listGrokModels(secret: StoredProviderSecret): Promise<ProviderModel[]> {
@@ -202,6 +239,10 @@ async function chatClaude(
   secret: StoredProviderSecret,
   prompt: string,
   model?: string,
+  options?: {
+    thinkingLevel?: ThinkingLevel;
+    includeThinking?: boolean;
+  },
 ) {
   const token = secret.setupToken || secret.accessToken;
   if (!token) throw new Error("Claude token missing");
@@ -211,18 +252,31 @@ async function chatClaude(
       ? model
       : preferModel(models, ["claude-sonnet", "claude-opus", "claude-haiku", "claude"]);
 
+  const budget = claudeThinkingBudget(options?.thinkingLevel);
+  const includeThinking = options?.includeThinking !== false;
+  const maxTokens = budget ? Math.max(budget + 1024, 2048) : 1024;
+
+  const body: Record<string, unknown> = {
+    model: selected,
+    max_tokens: maxTokens,
+    system: "You are Claude Code, Anthropic's official CLI for Claude.",
+    messages: [{ role: "user", content: prompt }],
+  };
+  if (budget) {
+    body.thinking = {
+      type: "enabled",
+      budget_tokens: budget,
+      ...(includeThinking ? { display: "summarized" } : {}),
+    };
+  }
+
   const res = await fetch(CLAUDE_OAUTH.messagesUrl, {
     method: "POST",
     headers: {
       ...claudeHeaders(token),
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      model: selected,
-      max_tokens: 512,
-      system: "You are Claude Code, Anthropic's official CLI for Claude.",
-      messages: [{ role: "user", content: prompt }],
-    }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) {
     const text = await res.text();
@@ -231,15 +285,39 @@ async function chatClaude(
     );
   }
   const json = (await res.json()) as {
-    content?: Array<{ type: string; text?: string }>;
+    content?: Array<{
+      type: string;
+      text?: string;
+      thinking?: string;
+      signature?: string;
+    }>;
     model?: string;
   };
-  const text = (json.content || [])
-    .filter((c) => c.type === "text" && c.text)
-    .map((c) => c.text)
-    .join("\n");
+  const blocks: ThinkBlock[] = [];
+  const textParts: string[] = [];
+  for (const c of json.content || []) {
+    if (c.type === "thinking" || c.type === "redacted_thinking") {
+      blocks.push({
+        type: "thinking",
+        content: typeof c.thinking === "string" ? c.thinking : undefined,
+        signature: typeof c.signature === "string" ? c.signature : undefined,
+        summary: typeof c.thinking === "string" ? c.thinking : undefined,
+        raw: c as unknown as Record<string, unknown>,
+      });
+      continue;
+    }
+    if (c.type === "text" && c.text) textParts.push(c.text);
+  }
+  const thinking: ThinkingPayload | undefined = budget
+    ? {
+        level: options?.thinkingLevel || "medium",
+        summary: blocks.map((b) => b.content || b.summary || "").filter(Boolean).join("\n\n") || undefined,
+        blocks,
+      }
+    : undefined;
   return {
-    text: text || JSON.stringify(json).slice(0, 1000),
+    text: textParts.join("\n") || JSON.stringify(json).slice(0, 1000),
+    thinking,
     model: json.model || selected,
     models,
     providerLabel: "Claude Code",
@@ -322,7 +400,10 @@ export async function runProviderChat(input: {
         includeThinking: input.includeThinking,
       });
     case "claude":
-      return chatClaude(secret, input.prompt, input.model);
+      return chatClaude(secret, input.prompt, input.model, {
+        thinkingLevel: input.thinkingLevel,
+        includeThinking: input.includeThinking,
+      });
     case "grok":
       return chatGrok(secret, input.prompt, input.model);
     default:

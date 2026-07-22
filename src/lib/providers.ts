@@ -278,6 +278,28 @@ export function exposeProviderCredentials(
         protocol: "anthropic_oauth",
         setupToken: secret.setupToken ?? secret.accessToken ?? null,
         accessToken: secret.setupToken ?? secret.accessToken ?? null,
+        capabilities: {
+          chat: true,
+          reasoning: true,
+          thinkingLevels: ["none", "low", "medium", "high"],
+          defaultThinkingLevel: "medium",
+          thinkBlocks: {
+            outputItemType: "thinking",
+            requestShape: {
+              thinking: {
+                type: "enabled",
+                budget_tokens: "<mappedFromThinkingLevel>",
+                display: "summarized",
+              },
+              max_tokens: "<mustExceedBudget>",
+            },
+            responseShape: {
+              type: "thinking",
+              thinking: "<summary or thinking text>",
+              signature: "<opaque>",
+            },
+          },
+        },
         endpoints: {
           models: CLAUDE_OAUTH.modelsUrl,
           messages: CLAUDE_OAUTH.messagesUrl,

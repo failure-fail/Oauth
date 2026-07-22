@@ -27,13 +27,25 @@ type ProviderModel = {
   supportsReasoningSummaries?: boolean;
 };
 
+type ThinkBlock = {
+  type: "reasoning" | "thinking" | string;
+  id?: string;
+  summary?: string;
+  content?: string;
+  encryptedContent?: string;
+  hasEncryptedContent?: boolean;
+  signature?: string;
+};
+
 type Message = {
   id: string;
   role: "user" | "assistant" | "system";
   text: string;
   provider?: ProviderId;
   model?: string;
+  thinkingLevel?: ThinkingLevel;
   thinkingSummary?: string;
+  thinkBlocks?: ThinkBlock[];
   images?: string[];
 };
 
@@ -69,7 +81,7 @@ export function ChatPanel({
       id: "welcome",
       role: "system",
       text: connected.length
-        ? "Choose a provider and model. Codex/ChatGPT support thinking levels and GPT Image 2."
+        ? "Choose a provider and model. Codex/ChatGPT/Claude support thinking levels and think blocks."
         : "Connect a provider first, then come back to test live models.",
     },
   ]);
@@ -80,14 +92,18 @@ export function ChatPanel({
     selectedModel?.kind === "image" || model === "gpt-image-2";
   const supportsImages = provider === "codex" || provider === "chatgpt";
   const supportsThinking =
-    supportsImages &&
     !isImageModel &&
-    Boolean(selectedModel?.reasoningLevels?.length);
+    (provider === "codex" ||
+      provider === "chatgpt" ||
+      provider === "claude") &&
+    Boolean(selectedModel?.reasoningLevels?.length || provider === "claude");
 
   const thinkingOptions =
     selectedModel?.reasoningLevels?.length
       ? selectedModel.reasoningLevels
-      : (["low", "medium", "high", "xhigh"] as ThinkingLevel[]);
+      : provider === "claude"
+        ? (["none", "low", "medium", "high"] as ThinkingLevel[])
+        : (["low", "medium", "high", "xhigh"] as ThinkingLevel[]);
 
   useEffect(() => {
     if (!provider) return;
@@ -262,7 +278,11 @@ export function ChatPanel({
             text: data.text || "(empty response)",
             provider,
             model: data.model,
+            thinkingLevel: data.thinking?.level,
             thinkingSummary: data.thinking?.summary,
+            thinkBlocks: Array.isArray(data.thinking?.blocks)
+              ? data.thinking.blocks
+              : undefined,
           },
         ]);
       }
@@ -377,8 +397,37 @@ export function ChatPanel({
                   ? msg.provider || "Assistant"
                   : "System"}
               {msg.model ? <span>· {msg.model}</span> : null}
+              {msg.thinkingLevel ? (
+                <span>· think:{msg.thinkingLevel}</span>
+              ) : null}
             </header>
-            {msg.thinkingSummary ? (
+            {msg.thinkBlocks?.length ? (
+              msg.thinkBlocks.map((block, idx) => {
+                const body =
+                  block.summary ||
+                  block.content ||
+                  (block.hasEncryptedContent || block.encryptedContent
+                    ? "(encrypted reasoning item — usable for multi-turn continuity)"
+                    : "");
+                if (!body) return null;
+                return (
+                  <details
+                    key={`${msg.id}-think-${block.id || idx}`}
+                    className="think-block"
+                    open={idx === 0}
+                  >
+                    <summary>
+                      Think block
+                      {block.type ? ` · ${block.type}` : ""}
+                      {block.hasEncryptedContent || block.encryptedContent
+                        ? " · encrypted"
+                        : ""}
+                    </summary>
+                    <pre>{body}</pre>
+                  </details>
+                );
+              })
+            ) : msg.thinkingSummary ? (
               <details className="think-block" open>
                 <summary>Thinking</summary>
                 <pre>{msg.thinkingSummary}</pre>

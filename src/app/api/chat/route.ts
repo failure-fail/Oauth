@@ -15,6 +15,33 @@ const chatSchema = z.object({
   includeThinking: z.boolean().optional(),
 });
 
+function sanitizeThinking(thinking: unknown) {
+  if (!thinking || typeof thinking !== "object") return undefined;
+  const t = thinking as {
+    level?: string;
+    summary?: string;
+    blocks?: Array<Record<string, unknown>>;
+  };
+  return {
+    level: t.level,
+    summary: t.summary,
+    blocks: (t.blocks || []).map((block) => ({
+      type: block.type,
+      id: typeof block.id === "string" ? block.id : undefined,
+      summary: typeof block.summary === "string" ? block.summary : undefined,
+      content: typeof block.content === "string" ? block.content : undefined,
+      signature:
+        typeof block.signature === "string" ? block.signature : undefined,
+      hasEncryptedContent: Boolean(block.encryptedContent),
+      // Keep a truncated encrypted payload for multi-turn continuity tests.
+      encryptedContent:
+        typeof block.encryptedContent === "string"
+          ? block.encryptedContent.slice(0, 4000)
+          : undefined,
+    })),
+  };
+}
+
 export async function POST(req: Request) {
   const user = await getCurrentUser();
   if (!user) {
@@ -42,7 +69,8 @@ export async function POST(req: Request) {
       model: result.model,
       models: result.models,
       text: result.text,
-      thinking: "thinking" in result ? result.thinking : undefined,
+      thinking:
+        "thinking" in result ? sanitizeThinking(result.thinking) : undefined,
       providerLabel: result.providerLabel,
       transport: "transport" in result ? result.transport : undefined,
       warning: "warning" in result ? result.warning : undefined,

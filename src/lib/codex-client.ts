@@ -14,10 +14,20 @@ export type ThinkingLevel =
   | "max";
 
 export type ThinkBlock = {
-  type: "reasoning";
+  type: "reasoning" | "thinking";
+  id?: string;
   summary?: string;
+  /** Visible thinking text when the upstream returns it (e.g. Claude). */
+  content?: string;
   encryptedContent?: string;
+  signature?: string;
   raw?: Record<string, unknown>;
+};
+
+export type ThinkingPayload = {
+  level?: ThinkingLevel;
+  summary?: string;
+  blocks: ThinkBlock[];
 };
 
 export type ProviderModel = {
@@ -426,17 +436,139 @@ export async function listCodexModels(secret: StoredProviderSecret): Promise<{
   }
 }
 
-async function readSsePayload(raw: string): Promise<{
+function summaryTextFromReasoningItem(item: Record<string, unknown>): string {
+  if (typeof item.summary === "string") return item.summary;
+  if (!Array.isArray(item.summary)) return "";
+  return item.summary
+    .map((s) => {
+      if (typeof s === "string") return s;
+      if (s && typeof s === "object") {
+        return String((s as { text?: string }).text || "");
+      }
+      return "";
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
+function reasoningContentFromItem(item: Record<string, unknown>): string {
+  if (typeof item.content === "string") return item.content;
+  if (!Array.isArray(item.content)) return "";
+  return item.content
+    .map((c) => {
+      if (typeof c === "string") return c;
+      if (!c || typeof c !== "object") return "";
+      const row = c as { text?: string; type?: string };
+      if (row.type === "reasoning_text" || row.type === "summary_text" || row.text) {
+        return String(row.text || "");
+      }
+      return "";
+    })
+    .filter(Boolean)
+    .join("");
+}
+
+function pushThinkBlock(
+  blocks: ThinkBlock[],
+  item: Record<string, unknown>,
+  type: ThinkBlock["type"] = "reasoning",
+) {
+  const id = typeof item.id === "string" ? item.id : undefined;
+  const summary = summaryTextFromReasoningItem(item) || undefined;
+  const content = reasoningContentFromItem(item) || undefined;
+  const encryptedContent =
+    typeof item.encrypted_content === "string"
+      ? item.encrypted_content
+      : undefined;
+  const signature =
+    typeof item.signature === "string" ? item.signature : undefined;
+  if (!summary && !content && !encryptedContent && !signature) return;
+
+  const existingIdx = id
+    ? blocks.findIndex((b) => b.id === id)
+    : blocks.findIndex(
+        (b) =>
+          b.type === type &&
+          b.summary === summary &&
+          b.content === content &&
+          b.encryptedContent === encryptedContent,
+      );
+  const next: ThinkBlock = {
+    type,
+    id,
+    summary,
+    content,
+    encryptedContent,
+    signature,
+    raw: item,
+  };
+  if (existingIdx >= 0) {
+    blocks[existingIdx] = { ...blocks[existingIdx], ...next };
+  } else {
+    blocks.push(next);
+  }
+}
+
+function extractFromResponseObject(
+  response: Record<string, unknown>,
+  chunks: string[],
+  summaryChunks: string[],
+  thinkBlocks: ThinkBlock[],
+) {
+  if (typeof response.output_text === "string" && response.output_text) {
+    chunks.push(response.output_text);
+  }
+  for (const item of (response.output as Array<Record<string, unknown>>) || []) {
+    if (item?.type === "reasoning") {
+      pushThinkBlock(thinkBlocks, item, "reasoning");
+      const summary = summaryTextFromReasoningItem(item);
+      if (summary) summaryChunks.push(summary);
+      const content = reasoningContentFromItem(item);
+      if (content) summaryChunks.push(content);
+    }
+    if (item?.type === "message" && Array.isArray(item.content)) {
+      for (const c of item.content as Array<{ text?: string; type?: string }>) {
+        if (c.type === "output_text" || c.text) {
+          if (c.text) chunks.push(c.text);
+        }
+      }
+    }
+  }
+}
+
+function parseCodexChatPayload(raw: string): {
   text: string;
   thinkingSummary: string;
   thinkBlocks: ThinkBlock[];
-}> {
-  if (!raw.includes("data:")) {
-    return { text: raw, thinkingSummary: "", thinkBlocks: [] };
-  }
+} {
   const chunks: string[] = [];
   const summaryChunks: string[] = [];
   const thinkBlocks: ThinkBlock[] = [];
+  const reasoningTextChunks: string[] = [];
+
+  if (!raw.includes("data:")) {
+    try {
+      const json = JSON.parse(raw) as Record<string, unknown>;
+      extractFromResponseObject(json, chunks, summaryChunks, thinkBlocks);
+      if (json.response && typeof json.response === "object") {
+        extractFromResponseObject(
+          json.response as Record<string, unknown>,
+          chunks,
+          summaryChunks,
+          thinkBlocks,
+        );
+      }
+      if (typeof json.text === "string") chunks.push(json.text);
+    } catch {
+      // fall through to raw slice
+    }
+    return {
+      text: chunks.join("") || raw.slice(0, 2000),
+      thinkingSummary: [...summaryChunks, ...reasoningTextChunks].join(""),
+      thinkBlocks,
+    };
+  }
+
   for (const line of raw.split("\n")) {
     if (!line.startsWith("data:")) continue;
     const data = line.slice(5).trim();
@@ -444,7 +576,10 @@ async function readSsePayload(raw: string): Promise<{
     try {
       const json = JSON.parse(data) as Record<string, unknown>;
       if (typeof json.text === "string") chunks.push(json.text);
-      if (json.type === "response.output_text.delta" && typeof json.delta === "string") {
+      if (
+        json.type === "response.output_text.delta" &&
+        typeof json.delta === "string"
+      ) {
         chunks.push(json.delta);
       }
       if (
@@ -454,86 +589,92 @@ async function readSsePayload(raw: string): Promise<{
         summaryChunks.push(json.delta);
       }
       if (
-        json.type === "response.reasoning_summary_part.added" &&
+        json.type === "response.reasoning_summary_text.done" &&
+        typeof json.text === "string"
+      ) {
+        summaryChunks.push(json.text);
+      }
+      if (
+        (json.type === "response.reasoning_summary_part.added" ||
+          json.type === "response.reasoning_summary_part.done") &&
         typeof json.part === "object" &&
         json.part
       ) {
         const part = json.part as { text?: string };
         if (part.text) summaryChunks.push(part.text);
       }
-      if (json.type === "response.output_item.done" || json.type === "response.output_item.added") {
+      if (
+        json.type === "response.reasoning_text.delta" &&
+        typeof json.delta === "string"
+      ) {
+        reasoningTextChunks.push(json.delta);
+      }
+      if (
+        json.type === "response.reasoning_text.done" &&
+        typeof json.text === "string"
+      ) {
+        reasoningTextChunks.push(json.text);
+      }
+      if (
+        json.type === "response.output_item.done" ||
+        json.type === "response.output_item.added"
+      ) {
         const item = json.item as Record<string, unknown> | undefined;
         if (item?.type === "reasoning") {
-          const summaryParts = Array.isArray(item.summary)
-            ? item.summary
-                .map((s) =>
-                  s && typeof s === "object"
-                    ? String((s as { text?: string }).text || "")
-                    : "",
-                )
-                .filter(Boolean)
-            : [];
-          thinkBlocks.push({
-            type: "reasoning",
-            summary: summaryParts.join("\n") || undefined,
-            encryptedContent:
-              typeof item.encrypted_content === "string"
-                ? item.encrypted_content
-                : undefined,
-            raw: item,
-          });
-          if (summaryParts.length) summaryChunks.push(summaryParts.join("\n"));
+          pushThinkBlock(thinkBlocks, item, "reasoning");
+          const summary = summaryTextFromReasoningItem(item);
+          if (summary) summaryChunks.push(summary);
         }
       }
       if (json.type === "response.completed") {
-        const response = json.response as
-          | {
-              output_text?: string;
-              output?: Array<Record<string, unknown>>;
-            }
-          | undefined;
-        if (response?.output_text) chunks.push(response.output_text);
-        for (const item of response?.output || []) {
-          if (item.type === "reasoning") {
-            const summaryParts = Array.isArray(item.summary)
-              ? item.summary
-                  .map((s) =>
-                    s && typeof s === "object"
-                      ? String((s as { text?: string }).text || "")
-                      : "",
-                  )
-                  .filter(Boolean)
-              : [];
-            thinkBlocks.push({
-              type: "reasoning",
-              summary: summaryParts.join("\n") || undefined,
-              encryptedContent:
-                typeof item.encrypted_content === "string"
-                  ? item.encrypted_content
-                  : undefined,
-              raw: item,
-            });
-            if (summaryParts.length) summaryChunks.push(summaryParts.join("\n"));
-          }
-          if (item.type === "message" && Array.isArray(item.content)) {
-            for (const c of item.content as Array<{ text?: string }>) {
-              if (c.text) chunks.push(c.text);
-            }
-          }
+        const response = json.response as Record<string, unknown> | undefined;
+        if (response) {
+          extractFromResponseObject(
+            response,
+            chunks,
+            summaryChunks,
+            thinkBlocks,
+          );
         }
       }
       const choices = json.choices as
         | Array<{ delta?: { content?: string }; message?: { content?: string } }>
         | undefined;
       if (choices?.[0]?.delta?.content) chunks.push(choices[0].delta.content);
-      if (choices?.[0]?.message?.content) chunks.push(choices[0].message.content);
+      if (choices?.[0]?.message?.content) {
+        chunks.push(choices[0].message.content);
+      }
     } catch {
-      // ignore
+      // ignore malformed SSE chunks
     }
   }
+
+  if (reasoningTextChunks.length) {
+    pushThinkBlock(
+      thinkBlocks,
+      {
+        type: "reasoning",
+        content: reasoningTextChunks.join(""),
+      },
+      "reasoning",
+    );
+  }
+
+  // Prefer completed reasoning items for the summary; fall back to streamed deltas.
+  const blockSummary = thinkBlocks
+    .map((b) => b.summary || b.content || "")
+    .filter(Boolean)
+    .join("\n\n");
+  const streamedSummary = summaryChunks.join("");
+  const thinkingSummary =
+    blockSummary ||
+    streamedSummary ||
+    reasoningTextChunks.join("") ||
+    "";
+
   return {
     text: chunks.join("") || raw.slice(0, 2000),
-    thinkingSummary: summaryChunks.join(""),
+    thinkingSummary,
     thinkBlocks,
   };
 }
@@ -629,14 +770,14 @@ export async function chatCodex(
       `${label} chat failed (${selected} via ${transport}): ${res.status} ${text.slice(0, 400)}`,
     );
   }
-  const parsed = await readSsePayload(text);
+  const parsed = parseCodexChatPayload(text);
   return {
     text: parsed.text,
     thinking: {
       level: thinkingLevel,
       summary: parsed.thinkingSummary || undefined,
       blocks: parsed.thinkBlocks,
-    },
+    } satisfies ThinkingPayload,
     model: selected,
     models: listed.models,
     providerLabel: label,
