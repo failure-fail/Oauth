@@ -141,16 +141,47 @@ function pickModels(payload: unknown): ProviderModel[] {
     const row = item as Record<string, unknown>;
     const id = typeof row.id === "string" ? row.id : null;
     if (!id || seen.has(id)) continue;
+
+    // VS Code Copilot model catalog: prefer picker-enabled chat/agent models.
+    if (row.model_picker_enabled === false) continue;
     const caps = row.capabilities as { type?: string } | undefined;
-    if (caps?.type && caps.type !== "chat" && caps.type !== "agent") continue;
+    const capType = caps?.type?.toLowerCase();
+    if (
+      capType &&
+      capType !== "chat" &&
+      capType !== "agent" &&
+      capType !== "chat_completion"
+    ) {
+      continue;
+    }
+
     seen.add(id);
     models.push({
       id,
-      name: typeof row.name === "string" ? row.name : id,
+      name:
+        typeof row.name === "string"
+          ? row.name
+          : typeof row.vendor === "string"
+            ? `${row.vendor} ${id}`
+            : id,
       kind: "chat",
     });
   }
   return models;
+}
+
+async function fetchCopilotModelsFromBase(
+  token: string,
+  base: string,
+): Promise<ProviderModel[]> {
+  const res = await fetch(`${base.replace(/\/$/, "")}/models`, {
+    headers: copilotHeaders(token),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`${base} → ${res.status} ${text.slice(0, 200)}`);
+  }
+  return pickModels(await res.json());
 }
 
 export async function listCopilotModels(
@@ -160,26 +191,47 @@ export async function listCopilotModels(
   source: "live" | "fallback";
   warning?: string;
 }> {
-  const token = secret.accessToken;
-  if (!token) throw new Error("Copilot session token missing");
-  const base = copilotApiBase(secret);
   try {
-    const res = await fetch(`${base}/models`, {
-      headers: copilotHeaders(token),
-    });
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`${res.status} ${text.slice(0, 200)}`);
+    let working = secret;
+    if (!working.accessToken && working.refreshToken) {
+      working = await refreshCopilotSession(working);
     }
-    const models = pickModels(await res.json());
-    if (!models.length) {
-      return {
-        models: FALLBACK_MODELS,
-        source: "fallback",
-        warning: "Copilot returned an empty model list; using known models.",
-      };
+    const token = working.accessToken;
+    if (!token) throw new Error("Copilot session token missing");
+
+    const primary = copilotApiBase(working);
+    const candidates = Array.from(
+      new Set([
+        primary,
+        COPILOT_OAUTH.defaultApiBase,
+        "https://api.individual.githubcopilot.com",
+        "https://api.business.githubcopilot.com",
+      ]),
+    );
+
+    const errors: string[] = [];
+    for (const base of candidates) {
+      try {
+        const models = await fetchCopilotModelsFromBase(token, base);
+        if (models.length) {
+          return { models, source: "live" };
+        }
+        errors.push(`${base} → empty catalog`);
+      } catch (error) {
+        errors.push(
+          error instanceof Error ? error.message : `${base} → failed`,
+        );
+      }
     }
-    return { models, source: "live" };
+
+    return {
+      models: FALLBACK_MODELS,
+      source: "fallback",
+      warning:
+        errors.length > 0
+          ? `${errors.join(" | ")} — using known Copilot models.`
+          : "Copilot returned an empty model list; using known models.",
+    };
   } catch (error) {
     return {
       models: FALLBACK_MODELS,

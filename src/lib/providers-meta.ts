@@ -34,7 +34,7 @@ export const PROVIDERS = [
     buttonLabel: "Connect GitHub Copilot",
     connectedLabel: "Connected to GitHub Copilot",
     description:
-      "GitHub device-code OAuth (same Copilot GitHub App as VS Code). Session tokens talk to api.individual.githubcopilot.com.",
+      "GitHub device-code OAuth (same Copilot GitHub App as VS Code). Session tokens talk to api.githubcopilot.com.",
     method: "device_oauth",
     docsUrl: "https://docs.github.com/en/copilot",
     accent: "#7ee787",

@@ -6,7 +6,14 @@ import { listProviderModels } from "@/lib/chat";
 import type { ProviderId } from "@/lib/config";
 
 const schema = z.object({
-  provider: z.enum(["codex", "antigravity", "claude", "grok"]),
+  provider: z.enum([
+    "codex",
+    "antigravity",
+    "claude",
+    "grok",
+    "copilot",
+    "mimo",
+  ]),
 });
 
 export async function GET(req: Request) {
