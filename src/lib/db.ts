@@ -90,8 +90,6 @@ const emptyDb = (): Database => ({
 
 const STORE_KEY = "failure-oauth:store";
 const KNOWN_PROVIDERS = new Set<string>(PROVIDERS.map((p) => p.id));
-/** Providers we used to support but no longer expose. */
-const REMOVED_PROVIDERS = new Set(["cursor", "chatgpt"]);
 
 type KvLike = {
   get: (key: string) => Promise<string | null>;

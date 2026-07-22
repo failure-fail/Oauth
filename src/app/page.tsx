@@ -11,7 +11,8 @@ export default function HomePage() {
         <h1 className="hero-title">One OAuth for every AI app.</h1>
         <p className="hero-lede">
           Users connect Codex, Antigravity, Claude Code, and Grok Build once. Your
-          app gets PKCE tokens, live models, thinking levels, and GPT Image 2.
+          app gets PKCE tokens, live models, thinking levels, and provider
+          credentials.
         </p>
         <div className="hero-cta">
           <SignInWithFailure href="/signup" />
@@ -33,8 +34,8 @@ export default function HomePage() {
           <article>
             <h3>Codex + Antigravity</h3>
             <p>
-              Desktop OAuth and Google Antigravity OAuth. Responses, thinking
-              effort, think blocks, GPT Image 2 generate/edit.
+              Desktop OAuth and Google Antigravity OAuth. Live models, thinking
+              levels, think blocks — plus GPT Image 2 on Codex.
             </p>
           </article>
           <article>
