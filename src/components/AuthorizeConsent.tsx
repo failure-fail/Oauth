@@ -76,7 +76,7 @@ export function AuthorizeConsent({
       <h1>{appName}</h1>
       <p>
         This app will receive your Failure profile and connected provider
-        credentials for: Codex, ChatGPT, Claude Code, and Grok Build.
+        credentials for: Codex, Antigravity, Claude Code, and Grok Build.
       </p>
       <ul className="scope-list">
         {scope.split(/\s+/).map((s) => (

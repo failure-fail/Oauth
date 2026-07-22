@@ -6,7 +6,7 @@ import { runProviderChat } from "@/lib/chat";
 import type { ProviderId } from "@/lib/config";
 
 const chatSchema = z.object({
-  provider: z.enum(["codex", "chatgpt", "claude", "grok"]),
+  provider: z.enum(["codex", "antigravity", "claude", "grok"]),
   prompt: z.string().min(1).max(4000),
   model: z.string().min(1).optional(),
   thinkingLevel: z

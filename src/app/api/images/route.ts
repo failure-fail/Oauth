@@ -8,7 +8,7 @@ import type { ProviderId } from "@/lib/config";
 
 const generateSchema = z.object({
   action: z.literal("generate"),
-  provider: z.enum(["codex", "chatgpt"]),
+  provider: z.enum(["codex"]),
   prompt: z.string().min(1).max(4000),
   size: z.string().optional(),
   quality: z.enum(["low", "medium", "high"]).optional(),
@@ -18,7 +18,7 @@ const generateSchema = z.object({
 
 const editSchema = z.object({
   action: z.literal("edit"),
-  provider: z.enum(["codex", "chatgpt"]),
+  provider: z.enum(["codex"]),
   prompt: z.string().min(1).max(4000),
   images: z
     .array(z.object({ dataUrl: z.string().min(32) }))
@@ -47,11 +47,10 @@ export async function POST(req: Request) {
       );
     }
     const { secret } = await ensureFreshConnection(conn);
-    const flavor = body.provider === "chatgpt" ? "chatgpt" : "codex";
     const result =
       body.action === "generate"
-        ? await generateCodexImage(secret, { ...body, flavor })
-        : await editCodexImage(secret, { ...body, flavor });
+        ? await generateCodexImage(secret, { ...body, flavor: "codex" })
+        : await editCodexImage(secret, { ...body, flavor: "codex" });
     return NextResponse.json({
       provider: body.provider,
       action: body.action,

@@ -5,7 +5,8 @@ import { db } from "@/lib/db";
 import { getCurrentUser } from "@/lib/session";
 import {
   completeCodexDesktopOAuth,
-  connectChatGptTokens,
+  completeAntigravityOAuth,
+  startAntigravityOAuth,
   connectClaudeSetupToken,
   connectionPublicView,
   pollGrokDeviceOAuth,
@@ -37,13 +38,12 @@ const actionSchema = z.discriminatedUnion("action", [
     callbackUrlOrCode: z.string().min(1),
   }),
   z.object({
-    action: z.literal("chatgpt_connect"),
-    accessToken: z.string().min(1),
-    refreshToken: z.string().optional(),
-    idToken: z.string().optional(),
-    expiresAt: z.number().optional(),
-    accountId: z.string().optional(),
-    isFedRamp: z.boolean().optional(),
+    action: z.literal("antigravity_start"),
+  }),
+  z.object({
+    action: z.literal("antigravity_complete"),
+    flowId: z.string(),
+    callbackUrlOrCode: z.string().min(1),
   }),
   z.object({
     action: z.literal("claude_connect"),
@@ -59,7 +59,7 @@ const actionSchema = z.discriminatedUnion("action", [
   }),
   z.object({
     action: z.literal("disconnect"),
-    provider: z.enum(["codex", "chatgpt", "claude", "grok"]),
+    provider: z.enum(["codex", "antigravity", "claude", "grok"]),
   }),
 ]);
 
@@ -83,8 +83,16 @@ export async function POST(req: Request) {
         });
         return NextResponse.json({ connection: connectionPublicView(conn) });
       }
-      case "chatgpt_connect": {
-        const conn = await connectChatGptTokens(user.id, body);
+      case "antigravity_start": {
+        const flow = await startAntigravityOAuth(user.id);
+        return NextResponse.json(flow);
+      }
+      case "antigravity_complete": {
+        const conn = await completeAntigravityOAuth({
+          userId: user.id,
+          flowId: body.flowId,
+          callbackUrlOrCode: body.callbackUrlOrCode,
+        });
         return NextResponse.json({ connection: connectionPublicView(conn) });
       }
       case "claude_connect": {

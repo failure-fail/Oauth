@@ -167,7 +167,7 @@ function accountId(secret: StoredProviderSecret): string {
     (typeof secret.raw?.accountId === "string" ? secret.raw.accountId : null);
   if (!id) {
     throw new Error(
-      "Missing ChatGPT-Account-Id — reconnect Codex/ChatGPT so the account id is stored",
+      "Missing ChatGPT-Account-Id — reconnect Codex so the account id is stored",
     );
   }
   return id;
@@ -180,17 +180,11 @@ export function codexAuthHeaders(
   return openAiChatAuthHeaders(secret, "codex", extra);
 }
 
-/**
- * Auth headers for ChatGPT subscription Responses API.
- * - codex: Codex CLI identity (originator + UA)
- * - chatgpt: openai-oauth / Sign in with ChatGPT (no Codex originator)
- *   https://github.com/EvanZhouDev/openai-oauth
- */
-export type OpenAiChatFlavor = "codex" | "chatgpt";
+export type OpenAiChatFlavor = "codex";
 
 export function openAiChatAuthHeaders(
   secret: StoredProviderSecret,
-  flavor: OpenAiChatFlavor,
+  flavor: OpenAiChatFlavor = "codex",
   extra?: Record<string, string>,
 ): Record<string, string> {
   const token = secret.accessToken;
@@ -199,11 +193,10 @@ export function openAiChatAuthHeaders(
     Authorization: `Bearer ${token}`,
     "chatgpt-account-id": accountId(secret),
     Accept: "application/json",
+    "User-Agent": "codex_cli_rs/0.144.1",
+    originator: CODEX_OAUTH.originator,
   };
-  if (flavor === "codex") {
-    headers["User-Agent"] = "codex_cli_rs/0.144.1";
-    headers.originator = CODEX_OAUTH.originator;
-  }
+  void flavor;
   const isFedRamp =
     secret.isFedRamp === true ||
     chatgptIsFedRampFromToken(secret.idToken) ||
@@ -220,7 +213,7 @@ const IMAGE_MODEL: ProviderModel = {
   kind: "image",
 };
 
-/** Dedupe live catalog and always expose GPT Image 2 for Codex/ChatGPT. */
+/** Dedupe live catalog and always expose GPT Image 2 for Codex. */
 function normalizeLiveModels(models: ProviderModel[]): ProviderModel[] {
   const seen = new Set<string>();
   const out: ProviderModel[] = [];
@@ -425,7 +418,7 @@ async function fetchUpstream(
     }
   }
   throw new Error(
-    `Codex/ChatGPT upstream unreachable from this host (Cloudflare Workers cannot call chatgpt.com directly). ${errors.join(" | ")}. Set FAILURE_CODEX_BASE_URL to a Node relay (see scripts/codex-relay.mjs).`,
+    `Codex upstream unreachable from this host (Cloudflare Workers cannot call chatgpt.com directly). ${errors.join(" | ")}. Set FAILURE_CODEX_BASE_URL to a Node relay (see scripts/codex-relay.mjs).`,
   );
 }
 
@@ -1005,10 +998,7 @@ async function generateCodexImageViaResponses(
 
   const body = JSON.stringify({
     model: host,
-    instructions:
-      flavor === "chatgpt"
-        ? "You are a helpful assistant."
-        : "You are Codex, OpenAI's coding agent.",
+    instructions: "You are Codex, OpenAI's coding agent.",
     input: userInputList(input.prompt),
     tools: [tool],
     tool_choice: { type: "image_generation" },
@@ -1156,10 +1146,7 @@ async function editCodexImageViaResponses(
 
   const body = JSON.stringify({
     model: host,
-    instructions:
-      flavor === "chatgpt"
-        ? "You are a helpful assistant."
-        : "You are Codex, OpenAI's coding agent.",
+    instructions: "You are Codex, OpenAI's coding agent.",
     input: [{ type: "message", role: "user", content }],
     tools: [tool],
     tool_choice: { type: "image_generation" },

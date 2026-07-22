@@ -1,6 +1,6 @@
 # Integrate Failure AI OAuth into your app
 
-Failure is a **PKCE OAuth 2.0** authorization server. Users create a Failure account, connect AI providers once, then sign into your app with **Sign in with Failure**. Your app receives tokens and (with the `providers` scope) live credential packages for Codex, ChatGPT, Claude Code, and Grok Build.
+Failure is a **PKCE OAuth 2.0** authorization server. Users create a Failure account, connect AI providers once, then sign into your app with **Sign in with Failure**. Your app receives tokens and (with the `providers` scope) live credential packages for Codex, Antigravity, Claude Code, and Grok Build.
 
 **Production**
 
@@ -252,21 +252,55 @@ originator: codex_cli_rs
 Accept: application/json
 ```
 
-### ChatGPT (`protocol: "openai_oauth"`)
+### Antigravity (`protocol: "antigravity_cloudcode"`)
 
-**Sign in with ChatGPT** via [openai-oauth](https://github.com/EvanZhouDev/openai-oauth) (`@openai-oauth/react`). Same upstream URL path (`/backend-api/codex` historically), but **do not** send Codex CLI `originator` / `codex_cli_rs` User-Agent — match `@openai-oauth/core` `applyAuthHeaders`:
+Google Antigravity / Cloud Code Assist via OAuth PKCE (same public client as Antigravity IDE). Docs: https://github.com/NoeFabris/opencode-antigravity-auth
+
+**Required headers**
 
 ```http
 Authorization: Bearer <accessToken>
-chatgpt-account-id: <accountId>
-Accept: application/json
+Content-Type: application/json
+User-Agent: antigravity/1.18.3 darwin/arm64
+X-Goog-Api-Client: google-cloud-sdk vscode_cloudshelleditor/0.1
+Client-Metadata: {"ideType":"ANTIGRAVITY","platform":"MACOS","pluginType":"GEMINI"}
 ```
 
-Optional: `X-OpenAI-Fedramp: true` when the account is FedRAMP. ChatGPT credential packages include `sdk.docs` pointing at the openai-oauth repo.
+**Chat example**
 
-### Shared subscription Responses API
+```js
+const cred = providers.find((p) => p.provider === "antigravity").credentials;
 
-Both Codex and ChatGPT talk to the ChatGPT subscription Responses surface.
+await fetch(cred.endpoints.streamGenerateContent, {
+  method: "POST",
+  headers: {
+    Authorization: `Bearer ${cred.accessToken}`,
+    "Content-Type": "application/json",
+    Accept: "text/event-stream",
+    "User-Agent": "antigravity/1.18.3 darwin/arm64",
+    "X-Goog-Api-Client": "google-cloud-sdk vscode_cloudshelleditor/0.1",
+    "Client-Metadata": '{"ideType":"ANTIGRAVITY","platform":"MACOS","pluginType":"GEMINI"}',
+  },
+  body: JSON.stringify({
+    project: cred.projectId,
+    model: "gemini-3-pro-high",
+    userAgent: "antigravity",
+    requestType: "agent",
+    request: {
+      contents: [{ role: "user", parts: [{ text: "Hello" }] }],
+      systemInstruction: { parts: [{ text: "You are helpful." }] },
+      generationConfig: {
+        maxOutputTokens: 4096,
+        thinkingConfig: { thinkingBudget: 8192, includeThoughts: true },
+      },
+    },
+  }),
+});
+```
+
+### Codex subscription Responses API
+
+Codex talks to the ChatGPT subscription Responses surface.
 
 **Endpoints** (from `credentials.endpoints`)
 
@@ -281,12 +315,12 @@ Both Codex and ChatGPT talk to the ChatGPT subscription Responses surface.
 
 > **Cloudflare Workers cannot call `chatgpt.com` directly** (CF challenge). Call from a normal Node/VM host, or use the relay URL from credentials.
 
-#### Chat example (ChatGPT / openai-oauth headers)
+#### Chat example (Codex)
 
 Subscription Responses expects `input` as a **list**, not a string:
 
 ```js
-const cred = providers.find((p) => p.provider === "chatgpt").credentials;
+const cred = providers.find((p) => p.provider === "codex").credentials;
 
 const res = await fetch(cred.endpoints.responses, {
   method: "POST",
@@ -317,8 +351,6 @@ const res = await fetch(cred.endpoints.responses, {
 });
 ```
 
-For **Codex**, add `originator: "codex_cli_rs"` and use the Codex credential package.
-
 **Think blocks** appear as output items:
 
 ```json
@@ -331,7 +363,7 @@ For **Codex**, add `originator: "codex_cli_rs"` and use the Codex credential pac
 
 #### Image example (GPT Image 2)
 
-Model id: `gpt-image-2` (always supported for connected Codex/ChatGPT accounts even when `/models` omits it).
+Model id: `gpt-image-2` (always supported for connected Codex accounts even when `/models` omits it).
 
 ```js
 await fetch(cred.endpoints.imageGenerations, {
@@ -340,7 +372,7 @@ await fetch(cred.endpoints.imageGenerations, {
     Authorization: `Bearer ${cred.accessToken}`,
     "chatgpt-account-id": cred.accountId,
     "Content-Type": "application/json",
-    // Codex only: also send originator: "codex_cli_rs"
+    originator: "codex_cli_rs",
   },
   body: JSON.stringify({
     model: "gpt-image-2",
@@ -474,7 +506,7 @@ export async function userinfo(accessToken: string, origin = "https://oauth.fail
     email?: string;
     name?: string;
     providers: Array<{
-      provider: "codex" | "chatgpt" | "claude" | "grok";
+      provider: "codex" | "antigravity" | "claude" | "grok";
       status: string;
       credentials?: Record<string, unknown>;
     }>;
@@ -489,9 +521,8 @@ export async function userinfo(accessToken: string, origin = "https://oauth.fail
 - Prefer **public PKCE** clients; never embed confidential secrets in browsers
 - Store `code_verifier` / tokens server-side when possible
 - Treat provider `accessToken` / `setupToken` as secrets — do not leak to the browser unless intentional
-- Always send `chatgpt-account-id` for Codex/ChatGPT
-- For **ChatGPT**, use `protocol: "openai_oauth"` headers (no Codex `originator`) — see [openai-oauth](https://github.com/EvanZhouDev/openai-oauth)
-- For **Codex**, send `originator: codex_cli_rs`
+- Always send `chatgpt-account-id` + `originator: codex_cli_rs` for Codex
+- For **Antigravity**, send Google Cloud Code Assist headers + `project` in the body
 - Claude Code OAuth carries **account-deletion risk** — require explicit user acknowledgement in your product
 - Redirect URIs must match exactly (including scheme/host/path)
 - Discovery may advertise revoke/jwks endpoints that are not implemented yet

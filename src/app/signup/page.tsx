@@ -14,7 +14,7 @@ export default async function SignupPage() {
         <p className="eyebrow">Failure AI OAuth</p>
         <h1>Create your account</h1>
         <p className="muted">
-          Email + password first. Then connect Codex, ChatGPT, Claude Code, Grok
+          Email + password first. Then connect Codex, Antigravity, Claude Code, Grok
           Build.
         </p>
         <Suspense fallback={<p className="muted">Loading…</p>}>

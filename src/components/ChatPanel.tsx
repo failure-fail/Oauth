@@ -81,7 +81,7 @@ export function ChatPanel({
       id: "welcome",
       role: "system",
       text: connected.length
-        ? "Choose a provider and model. Codex/ChatGPT/Claude support thinking levels and think blocks."
+        ? "Choose a provider and model. Codex/Antigravity/Claude support thinking levels and think blocks."
         : "Connect a provider first, then come back to test live models.",
     },
   ]);
@@ -90,18 +90,22 @@ export function ChatPanel({
   const selectedModel = models.find((m) => m.id === model);
   const isImageModel =
     selectedModel?.kind === "image" || model === "gpt-image-2";
-  const supportsImages = provider === "codex" || provider === "chatgpt";
+  const supportsImages = provider === "codex";
   const supportsThinking =
     !isImageModel &&
     (provider === "codex" ||
-      provider === "chatgpt" ||
+      provider === "antigravity" ||
       provider === "claude") &&
-    Boolean(selectedModel?.reasoningLevels?.length || provider === "claude");
+    Boolean(
+      selectedModel?.reasoningLevels?.length ||
+        provider === "claude" ||
+        provider === "antigravity",
+    );
 
   const thinkingOptions =
     selectedModel?.reasoningLevels?.length
       ? selectedModel.reasoningLevels
-      : provider === "claude"
+      : provider === "claude" || provider === "antigravity"
         ? (["none", "low", "medium", "high"] as ThinkingLevel[])
         : (["low", "medium", "high", "xhigh"] as ThinkingLevel[]);
 

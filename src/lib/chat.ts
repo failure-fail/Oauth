@@ -12,6 +12,10 @@ import {
   type ThinkingPayload,
 } from "./codex-client";
 import {
+  chatAntigravity,
+  listAntigravityModels,
+} from "./antigravity-client";
+import {
   ensureFreshConnection,
   type StoredProviderSecret,
 } from "./providers";
@@ -179,16 +183,20 @@ export async function listProviderModels(input: {
 }> {
   const { secret } = await ensureFreshConnection(input.connection);
   switch (input.provider) {
-    case "codex":
-    case "chatgpt": {
-      const result = await listCodexModels(
-        secret,
-        input.provider === "chatgpt" ? "chatgpt" : "codex",
-      );
+    case "codex": {
+      const result = await listCodexModels(secret, "codex");
       return {
         models: result.models,
         warning: result.warning,
         transport: result.transport,
+        source: result.source,
+      };
+    }
+    case "antigravity": {
+      const result = await listAntigravityModels(secret);
+      return {
+        models: result.models,
+        warning: result.warning,
         source: result.source,
       };
     }
@@ -397,12 +405,11 @@ export async function runProviderChat(input: {
         includeThinking: input.includeThinking,
         flavor: "codex",
       });
-    case "chatgpt":
-      return chatCodex(secret, input.prompt, "ChatGPT", {
+    case "antigravity":
+      return chatAntigravity(secret, input.prompt, {
         model: input.model,
         thinkingLevel: input.thinkingLevel,
         includeThinking: input.includeThinking,
-        flavor: "chatgpt",
       });
     case "claude":
       return chatClaude(secret, input.prompt, input.model, {

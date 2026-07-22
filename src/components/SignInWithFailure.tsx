@@ -66,7 +66,7 @@ export function FailureButtonCard({
       <h3 className="failure-button-card__title">Sign in with Failure</h3>
       <p className="failure-button-card__copy">
         Drop this frosted glass button into any app. It starts Failure PKCE
-        OAuth and returns connected Codex, ChatGPT, Claude Code, and Grok Build
+        OAuth and returns connected Codex, Antigravity, Claude Code, and Grok Build
         credentials through userinfo.
       </p>
       <div className="failure-button-card__stage">

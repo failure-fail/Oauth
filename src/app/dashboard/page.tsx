@@ -44,7 +44,7 @@ export default async function DashboardPage() {
             {connections.length}/{PROVIDERS.length} providers linked
           </h2>
           <p className="muted">
-            Connect once. Test thinking levels and GPT Image 2 in Chat. Apps
+            Connect once. Test thinking levels and models in Chat. Apps
             receive credential packages via userinfo.
           </p>
         </div>

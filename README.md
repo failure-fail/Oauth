@@ -7,7 +7,7 @@ Universal **PKCE OAuth** that any app can integrate. Users sign up with email an
 | Provider | Method |
 |---|---|
 | **Codex** | Official desktop OAuth (PKCE + `localhost:1455`, same as Codex CLI/Desktop) |
-| **ChatGPT** | Tokens from [openai-oauth](https://github.com/EvanZhouDev/openai-oauth) |
+| **Antigravity** | Google OAuth PKCE (`localhost:51121`) — Cloud Code Assist / Antigravity IDE client |
 | **Claude Code** | `claude setup-token` — **risk of account deletion** (Anthropic ToS) |
 | **Grok Build** | Grok Build / xAI device-code OAuth |
 
@@ -20,7 +20,7 @@ pnpm dev
 
 Open [http://localhost:3000](http://localhost:3000).
 
-Account providers config lives at `/account/providers` — stylized connect buttons for every provider. **ChatGPT is automated** via [`@openai-oauth/react`](https://github.com/EvanZhouDev/openai-oauth) (Sign in with ChatGPT); tokens sync into Failure on success.
+Account providers config lives at `/account/providers`.
 
 ## Deploy (Cloudflare Workers)
 
@@ -28,15 +28,13 @@ Production: **https://oauth.failure.fail**
 
 ```bash
 pnpm run deploy
-# or
-pnpm exec opennextjs-cloudflare build && pnpm exec opennextjs-cloudflare deploy
 ```
 
 Requires Wrangler auth (`CLOUDFLARE_API_TOKEN`). Data is stored in Cloudflare KV (`FAILURE_KV`). Secrets: `FAILURE_SESSION_SECRET`, `FAILURE_ENCRYPTION_KEY`.
 
 ## Integrate as an app
 
-Full guide: **[docs/INTEGRATION.md](./docs/INTEGRATION.md)** (PKCE, userinfo credential packages, Codex/ChatGPT/Claude/Grok call shapes, think blocks, GPT Image 2).
+Full guide: **[docs/INTEGRATION.md](./docs/INTEGRATION.md)** (PKCE, userinfo credential packages, Codex/Antigravity/Claude/Grok call shapes).
 
 Quick path:
 
@@ -55,14 +53,6 @@ Quick path:
 ></div>
 ```
 
-Or use the React component:
-
-```tsx
-import { SignInWithFailure } from "@/sdk/button";
-
-<SignInWithFailure href="/oauth/authorize?..." />
-```
-
 ### OAuth endpoints
 
 - Discovery: `GET /.well-known/openid-configuration`
@@ -71,43 +61,24 @@ import { SignInWithFailure } from "@/sdk/button";
 - UserInfo: `GET /api/oauth/userinfo`
 - UI format: `GET /api/ui-format`
 
-### PKCE token exchange
-
-```bash
-curl -X POST https://YOUR_HOST/api/oauth/token \
-  -H 'Content-Type: application/x-www-form-urlencoded' \
-  -d 'grant_type=authorization_code' \
-  -d 'client_id=YOUR_CLIENT_ID' \
-  -d 'code=AUTH_CODE' \
-  -d 'redirect_uri=https://yourapp.com/callback' \
-  -d 'code_verifier=PKCE_VERIFIER'
-```
-
-UserInfo (with `providers` scope) returns linked Codex / ChatGPT / Claude / Grok credential packages for the signed-in user. Each package includes refreshed tokens plus the live endpoints and required headers for that provider:
+UserInfo (with `providers` scope) returns linked credential packages:
 
 - **Codex** → `protocol: "codex_backend"` with `originator: codex_cli_rs`
-- **ChatGPT** → `protocol: "openai_oauth"` ([openai-oauth](https://github.com/EvanZhouDev/openai-oauth) / Sign in with ChatGPT) — **no** Codex originator
+- **Antigravity** → `protocol: "antigravity_cloudcode"` (Google Cloud Code Assist)
 - Claude → Anthropic OAuth headers
 - Grok → `cli-chat-proxy.grok.com`
 
-Codex/ChatGPT packages also advertise GPT Image 2 and thinking/think-block shapes.
-
 ### Cloudflare Workers note
 
-`chatgpt.com` blocks Cloudflare Worker egress. For production chat/models/images from Workers, run the included relay and set `FAILURE_CODEX_BASE_URL`:
+`chatgpt.com` blocks Cloudflare Worker egress for Codex. For production Codex chat/models/images from Workers, run the included relay and set `FAILURE_CODEX_BASE_URL`:
 
 ```bash
 pnpm relay:codex
-# then expose that host and set FAILURE_CODEX_BASE_URL to it
 ```
-
-## Universal UI format
-
-`GET /api/ui-format` returns the canonical button theme, OAuth URLs, and card copy so every app can render Failure consistently.
 
 ## Security notes
 
 - Provider secrets are encrypted at rest (AES-256-GCM).
 - Claude Code connection requires explicit risk acknowledgement.
 - Prefer public PKCE clients; confidential clients are supported via hashed client secrets.
-- This project is not affiliated with OpenAI, Anthropic, xAI,.
+- This project is not affiliated with OpenAI, Google, Anthropic, or xAI.

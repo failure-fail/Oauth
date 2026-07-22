@@ -2,7 +2,7 @@
   "name": "failure-oauth",
   "version": "0.1.0",
   "private": true,
-  "description": "Failure AI OAuth — universal PKCE OAuth for Codex, ChatGPT, Claude Code, and Grok Build",
+  "description": "Failure AI OAuth — universal PKCE OAuth for Codex, Antigravity, Claude Code, and Grok Build",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -16,8 +16,6 @@
     "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts"
   },
   "dependencies": {
-    "@openai-oauth/core": "^2.0.0",
-    "@openai-oauth/react": "^2.0.0",
     "@opennextjs/cloudflare": "^1.20.2",
     "bcryptjs": "^3.0.3",
     "jose": "^6.2.4",

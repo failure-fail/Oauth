@@ -30,54 +30,53 @@ export function randomToken(bytes = 32) {
   return randomBytes(bytes).toString("base64url");
 }
 
-export const OPENAI_OAUTH = {
-  // Shared OpenAI OAuth client used by Codex CLI and openai-oauth / Sign in with ChatGPT
-  // https://github.com/EvanZhouDev/openai-oauth
+/** OpenAI OAuth client used by official Codex CLI / Desktop. */
+export const CODEX_OAUTH = {
   clientId: "app_EMoamEEZ73f0CkXaXp7hrann",
-  issuer: "https://auth.openai.com",
   authorizeUrl: "https://auth.openai.com/oauth/authorize",
   tokenUrl: "https://auth.openai.com/oauth/token",
-  scope: "openid profile email offline_access",
-  // Historical path name on chatgpt.com — used by both Codex CLI and openai-oauth
-  baseUrl: "https://chatgpt.com/backend-api/codex",
-  sdkDocs: "https://github.com/EvanZhouDev/openai-oauth",
-};
-
-export const CODEX_OAUTH = {
-  // Official Codex CLI / Desktop public OAuth client (same client id as OPENAI_OAUTH)
-  clientId: OPENAI_OAUTH.clientId,
-  authorizeUrl: OPENAI_OAUTH.authorizeUrl,
-  tokenUrl: OPENAI_OAUTH.tokenUrl,
-  // Desktop Codex listens on this loopback callback (same as Codex CLI/Desktop)
   redirectUri: "http://localhost:1455/auth/callback",
   port: 1455,
-  // Official Codex login scope — extra scopes break token usability for models
-  scope: OPENAI_OAUTH.scope,
+  scope: "openid profile email offline_access",
   originator: "codex_cli_rs",
-  modelsUrl: `${OPENAI_OAUTH.baseUrl}/models`,
-  responsesUrl: `${OPENAI_OAUTH.baseUrl}/responses`,
-  imageGenerationsUrl: `${OPENAI_OAUTH.baseUrl}/images/generations`,
-  imageEditsUrl: `${OPENAI_OAUTH.baseUrl}/images/edits`,
+  baseUrl: "https://chatgpt.com/backend-api/codex",
+  modelsUrl: "https://chatgpt.com/backend-api/codex/models",
+  responsesUrl: "https://chatgpt.com/backend-api/codex/responses",
+  imageGenerationsUrl:
+    "https://chatgpt.com/backend-api/codex/images/generations",
+  imageEditsUrl: "https://chatgpt.com/backend-api/codex/images/edits",
   imageModel: "gpt-image-2",
 };
 
-/** ChatGPT via Sign in with ChatGPT (@openai-oauth/react) — not Codex CLI identity. */
-export const CHATGPT_OAUTH = {
-  clientId: OPENAI_OAUTH.clientId,
-  issuer: OPENAI_OAUTH.issuer,
-  authorizeUrl: OPENAI_OAUTH.authorizeUrl,
-  tokenUrl: OPENAI_OAUTH.tokenUrl,
-  scope: OPENAI_OAUTH.scope,
-  baseUrl: OPENAI_OAUTH.baseUrl,
-  modelsUrl: `${OPENAI_OAUTH.baseUrl}/models`,
-  responsesUrl: `${OPENAI_OAUTH.baseUrl}/responses`,
-  imageGenerationsUrl: `${OPENAI_OAUTH.baseUrl}/images/generations`,
-  imageEditsUrl: `${OPENAI_OAUTH.baseUrl}/images/edits`,
-  imageModel: "gpt-image-2",
-  sdk: "@openai-oauth/react",
-  sdkDocs: OPENAI_OAUTH.sdkDocs,
-  // openai-oauth applyAuthHeaders does NOT send Codex CLI originator / UA
-  requiredHeaderNames: ["Authorization", "chatgpt-account-id"] as const,
+/**
+ * Google Antigravity (Cloud Code Assist) OAuth — same public client as
+ * opencode-antigravity-auth / Antigravity IDE.
+ * https://github.com/NoeFabris/opencode-antigravity-auth
+ */
+export const ANTIGRAVITY_OAUTH = {
+  clientId:
+    "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com",
+  clientSecret: "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",
+  authorizeUrl: "https://accounts.google.com/o/oauth2/v2/auth",
+  tokenUrl: "https://oauth2.googleapis.com/token",
+  userInfoUrl: "https://www.googleapis.com/oauth2/v1/userinfo?alt=json",
+  redirectUri: "http://localhost:51121/oauth-callback",
+  port: 51121,
+  scopes: [
+    "https://www.googleapis.com/auth/cloud-platform",
+    "https://www.googleapis.com/auth/userinfo.email",
+    "https://www.googleapis.com/auth/userinfo.profile",
+    "https://www.googleapis.com/auth/cclog",
+    "https://www.googleapis.com/auth/experimentsandconfigs",
+  ],
+  endpoints: {
+    prod: "https://cloudcode-pa.googleapis.com",
+    daily: "https://daily-cloudcode-pa.sandbox.googleapis.com",
+    autopush: "https://autopush-cloudcode-pa.sandbox.googleapis.com",
+  },
+  defaultProjectId: "rising-fact-p41fc",
+  version: "1.18.3",
+  docsUrl: "https://github.com/NoeFabris/opencode-antigravity-auth",
 };
 
 export const GROK_OAUTH = {
@@ -86,7 +85,6 @@ export const GROK_OAUTH = {
   tokenUrl: "https://auth.x.ai/oauth2/token",
   scope: "openid profile email offline_access grok-cli:access api:access",
   grantType: "urn:ietf:params:oauth:grant-type:device_code",
-  // Grok Build OAuth tokens talk to the CLI chat proxy, not api.x.ai
   proxyBaseUrl: "https://cli-chat-proxy.grok.com/v1",
   modelsUrl: "https://cli-chat-proxy.grok.com/v1/models-v2",
   responsesUrl: "https://cli-chat-proxy.grok.com/v1/responses",

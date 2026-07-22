@@ -1,16 +1,15 @@
 import { randomUUID } from "crypto";
 import {
+  ANTIGRAVITY_OAUTH,
   CLAUDE_OAUTH,
-  CHATGPT_OAUTH,
   CODEX_OAUTH,
   GROK_OAUTH,
-  OPENAI_OAUTH,
   randomToken,
   type ProviderId,
 } from "./config";
 import { encryptSecret, decryptSecret, pkceChallengeFromVerifier } from "./crypto";
 import { db, type ProviderConnection } from "./db";
-import { refreshOpenAIOAuthTokens } from "@openai-oauth/core";
+import { antigravityCredentialEndpoints } from "./antigravity-client";
 
 export type StoredProviderSecret = {
   type: string;
@@ -20,6 +19,7 @@ export type StoredProviderSecret = {
   expiresAt?: number;
   accountId?: string;
   accountKey?: string;
+  projectId?: string;
   setupToken?: string;
   isFedRamp?: boolean;
   raw?: Record<string, unknown>;
@@ -84,22 +84,78 @@ function tokenNeedsRefresh(secret: StoredProviderSecret): boolean {
 async function refreshOpenAiTokens(
   refreshToken: string,
 ): Promise<StoredProviderSecret> {
-  // Use @openai-oauth/core so ChatGPT refresh matches Sign in with ChatGPT
-  const json = await refreshOpenAIOAuthTokens({
-    refreshToken,
-    clientId: OPENAI_OAUTH.clientId,
-    issuer: OPENAI_OAUTH.issuer,
-    tokenUrl: OPENAI_OAUTH.tokenUrl,
+  const body = new URLSearchParams({
+    grant_type: "refresh_token",
+    refresh_token: refreshToken,
+    client_id: CODEX_OAUTH.clientId,
   });
+  const res = await fetch(CODEX_OAUTH.tokenUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      Accept: "application/json",
+    },
+    body,
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`OpenAI token refresh failed: ${res.status} ${text.slice(0, 300)}`);
+  }
+  const json = (await res.json()) as {
+    access_token: string;
+    refresh_token?: string;
+    id_token?: string;
+    expires_in?: number;
+  };
+  const accountId = chatgptAccountIdFromToken(json.access_token);
   return {
     type: "openai_oauth_refreshed",
-    accessToken: json.accessToken,
-    refreshToken: json.refreshToken || refreshToken,
-    idToken: json.idToken,
-    expiresAt: json.expiresIn ? Date.now() + json.expiresIn * 1000 : undefined,
-    accountId: json.accountId || undefined,
-    isFedRamp: json.isFedRamp,
-    raw: json.raw as Record<string, unknown>,
+    accessToken: json.access_token,
+    refreshToken: json.refresh_token || refreshToken,
+    idToken: json.id_token,
+    expiresAt: json.expires_in ? Date.now() + json.expires_in * 1000 : undefined,
+    accountId: accountId || undefined,
+    isFedRamp: chatgptIsFedRampFromToken(json.id_token || json.access_token),
+    raw: json as unknown as Record<string, unknown>,
+  };
+}
+
+async function refreshAntigravityTokens(
+  refreshToken: string,
+): Promise<StoredProviderSecret> {
+  const res = await fetch(ANTIGRAVITY_OAUTH.tokenUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+      Accept: "*/*",
+      "User-Agent": "google-api-nodejs-client/9.15.1",
+    },
+    body: new URLSearchParams({
+      client_id: ANTIGRAVITY_OAUTH.clientId,
+      client_secret: ANTIGRAVITY_OAUTH.clientSecret,
+      grant_type: "refresh_token",
+      refresh_token: refreshToken,
+    }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(
+      `Antigravity token refresh failed: ${res.status} ${text.slice(0, 300)}`,
+    );
+  }
+  const json = (await res.json()) as {
+    access_token: string;
+    refresh_token?: string;
+    expires_in?: number;
+  };
+  return {
+    type: "antigravity_oauth",
+    accessToken: json.access_token,
+    refreshToken: json.refresh_token || refreshToken,
+    expiresAt: json.expires_in
+      ? Date.now() + json.expires_in * 1000
+      : undefined,
+    raw: json as unknown as Record<string, unknown>,
   };
 }
 
@@ -147,7 +203,7 @@ export async function ensureFreshConnection(
   let secret = readProviderSecret(conn.encryptedPayload);
 
   if (
-    (conn.provider === "codex" || conn.provider === "chatgpt") &&
+    conn.provider === "codex" &&
     tokenNeedsRefresh(secret) &&
     secret.refreshToken
   ) {
@@ -179,6 +235,32 @@ export async function ensureFreshConnection(
   }
 
   if (
+    conn.provider === "antigravity" &&
+    tokenNeedsRefresh(secret) &&
+    secret.refreshToken
+  ) {
+    const refreshed = await refreshAntigravityTokens(secret.refreshToken);
+    secret = {
+      ...secret,
+      ...refreshed,
+      type: secret.type || refreshed.type,
+      projectId:
+        secret.projectId ||
+        (typeof secret.raw?.projectId === "string"
+          ? secret.raw.projectId
+          : undefined),
+    };
+    conn = await db.upsertConnection({
+      userId: conn.userId,
+      provider: "antigravity",
+      status: conn.status,
+      label: conn.label,
+      encryptedPayload: storeProviderSecret(secret),
+      meta: conn.meta,
+    });
+  }
+
+  if (
     conn.provider === "grok" &&
     tokenNeedsRefresh(secret) &&
     secret.refreshToken
@@ -195,9 +277,9 @@ export async function ensureFreshConnection(
     });
   }
 
-  // Normalize OpenAI account id onto the secret for downstream callers
+  // Normalize OpenAI account id onto the secret for Codex callers
   if (
-    (conn.provider === "codex" || conn.provider === "chatgpt") &&
+    conn.provider === "codex" &&
     secret.accessToken &&
     !secret.accountId
   ) {
@@ -219,7 +301,7 @@ export function exposeProviderCredentials(
   switch (provider) {
     case "codex": {
       const relay = process.env.FAILURE_CODEX_BASE_URL?.trim().replace(/\/$/, "");
-      const base = relay || OPENAI_OAUTH.baseUrl;
+      const base = relay || CODEX_OAUTH.baseUrl;
       return {
         type: secret.type,
         protocol: "codex_backend",
@@ -277,74 +359,57 @@ export function exposeProviderCredentials(
           : "Direct chatgpt.com calls are blocked from Cloudflare Workers; apps should call from non-Worker hosts or a relay.",
       };
     }
-    case "chatgpt": {
-      // Align with https://github.com/EvanZhouDev/openai-oauth — ChatGPT, not Codex CLI.
-      const relay = process.env.FAILURE_CODEX_BASE_URL?.trim().replace(/\/$/, "");
-      const base = relay || CHATGPT_OAUTH.baseUrl;
+    case "antigravity": {
+      const endpoints = antigravityCredentialEndpoints();
       return {
         type: secret.type,
-        protocol: "openai_oauth",
+        protocol: "antigravity_cloudcode",
         accessToken: secret.accessToken ?? null,
         refreshToken: secret.refreshToken ?? null,
-        idToken: secret.idToken ?? null,
         expiresAt: secret.expiresAt ?? null,
-        accountId: secret.accountId ?? null,
-        isFedRamp: secret.isFedRamp ?? null,
+        projectId: secret.projectId ?? null,
+        email:
+          typeof secret.raw?.email === "string" ? secret.raw.email : null,
         capabilities: {
           chat: true,
-          imageGeneration: true,
-          imageEditing: true,
-          imageModel: CHATGPT_OAUTH.imageModel,
           reasoning: true,
-          thinkingLevels: ["none", "minimal", "low", "medium", "high", "xhigh"],
+          thinkingLevels: ["none", "low", "medium", "high"],
           defaultThinkingLevel: "medium",
           thinkBlocks: {
-            include: ["reasoning.encrypted_content"],
-            summary: ["auto", "concise", "detailed"],
-            outputItemType: "reasoning",
+            outputItemType: "thinking",
             requestShape: {
-              reasoning: { effort: "<thinkingLevel>", summary: "detailed" },
-              include: ["reasoning.encrypted_content"],
-              store: false,
-              stream: true,
+              generationConfig: {
+                thinkingConfig: {
+                  thinkingBudget: "<mappedFromThinkingLevel>",
+                  includeThoughts: true,
+                },
+              },
             },
             responseShape: {
-              type: "reasoning",
-              summary: [{ type: "summary_text", text: "..." }],
-              encrypted_content: "<opaque>",
+              parts: [
+                { thought: true, text: "...", thoughtSignature: "<opaque>" },
+                { text: "..." },
+              ],
             },
           },
         },
-        endpoints: {
-          models: `${base}/models`,
-          responses: `${base}/responses`,
-          imageGenerations: `${base}/images/generations`,
-          imageEdits: `${base}/images/edits`,
-          token: CHATGPT_OAUTH.tokenUrl,
-          openaiApiFallback: "https://api.openai.com/v1",
-        },
+        endpoints,
         requiredHeaders: {
           Authorization: "Bearer <accessToken>",
-          "chatgpt-account-id": "<accountId>",
-          // Do NOT send Codex CLI originator — matches @openai-oauth/core applyAuthHeaders
-        },
-        optionalHeaders: {
-          "X-OpenAI-Fedramp": "true when account is FedRAMP",
+          "Content-Type": "application/json",
+          "User-Agent": `antigravity/${ANTIGRAVITY_OAUTH.version} darwin/arm64`,
+          "X-Goog-Api-Client": "google-cloud-sdk vscode_cloudshelleditor/0.1",
+          "Client-Metadata":
+            '{"ideType":"ANTIGRAVITY","platform":"MACOS","pluginType":"GEMINI"}',
         },
         oauth: {
-          clientId: CHATGPT_OAUTH.clientId,
-          scope: CHATGPT_OAUTH.scope,
-          issuer: CHATGPT_OAUTH.issuer,
+          clientId: ANTIGRAVITY_OAUTH.clientId,
+          redirectUri: ANTIGRAVITY_OAUTH.redirectUri,
+          scopes: ANTIGRAVITY_OAUTH.scopes,
         },
-        sdk: {
-          npm: CHATGPT_OAUTH.sdk,
-          docs: CHATGPT_OAUTH.sdkDocs,
-        },
+        docs: ANTIGRAVITY_OAUTH.docsUrl,
         note:
-          "ChatGPT via Sign in with ChatGPT (openai-oauth). Upstream path is /backend-api/codex historically; use openai_oauth headers (no Codex originator)." +
-          (relay
-            ? " FAILURE_CODEX_BASE_URL relay is configured for Cloudflare Worker egress."
-            : " Direct chatgpt.com calls are blocked from Cloudflare Workers; use a non-Worker host or relay."),
+          "Google Antigravity / Cloud Code Assist. Requests use Gemini-style contents wrapped in { project, model, request }. See docs/INTEGRATION.md.",
       };
     }
     case "claude":
@@ -573,49 +638,188 @@ export async function completeCodexDesktopOAuth(input: {
   return conn;
 }
 
-export async function connectChatGptTokens(
-  userId: string,
-  tokens: {
-    accessToken: string;
-    refreshToken?: string;
-    idToken?: string;
-    expiresAt?: number;
-    accountId?: string;
-    isFedRamp?: boolean;
-  },
-) {
-  const accountId =
-    tokens.accountId || chatgptAccountIdFromToken(tokens.accessToken) || undefined;
-  if (!accountId) {
-    throw new Error(
-      "ChatGPT session missing account id — re-run Sign in with ChatGPT",
-    );
-  }
-  const isFedRamp =
-    tokens.isFedRamp ??
-    (chatgptIsFedRampFromToken(tokens.idToken) ||
-      chatgptIsFedRampFromToken(tokens.accessToken));
-  return await db.upsertConnection({
+export async function startAntigravityOAuth(userId: string) {
+  const verifier = randomToken(48);
+  const challenge = pkceChallengeFromVerifier(verifier);
+  const state = randomToken(24);
+  const params = new URLSearchParams({
+    client_id: ANTIGRAVITY_OAUTH.clientId,
+    response_type: "code",
+    redirect_uri: ANTIGRAVITY_OAUTH.redirectUri,
+    scope: ANTIGRAVITY_OAUTH.scopes.join(" "),
+    code_challenge: challenge,
+    code_challenge_method: "S256",
+    state,
+    access_type: "offline",
+    prompt: "consent",
+  });
+  const authorizeUrl = `${ANTIGRAVITY_OAUTH.authorizeUrl}?${params.toString()}`;
+  const flowId = randomUUID();
+  await db.savePendingFlow({
+    id: flowId,
     userId,
-    provider: "chatgpt",
+    provider: "antigravity",
+    encryptedState: encryptSecret(JSON.stringify({ verifier, state })),
+    expiresAt: Date.now() + 15 * 60 * 1000,
+  });
+  return {
+    flowId,
+    authorizeUrl,
+    redirectUri: ANTIGRAVITY_OAUTH.redirectUri,
+    port: ANTIGRAVITY_OAUTH.port,
+    instructions: [
+      "Antigravity uses Google OAuth PKCE (same client as Antigravity IDE / opencode-antigravity-auth).",
+      `Open the authorize URL, sign in with Google, then paste the full ${ANTIGRAVITY_OAUTH.redirectUri} callback URL below.`,
+      "Failure exchanges the code, discovers your Cloud Code project id, and stores refreshed tokens.",
+    ],
+  };
+}
+
+async function fetchAntigravityProjectId(accessToken: string): Promise<string> {
+  const bases = [
+    ANTIGRAVITY_OAUTH.endpoints.prod,
+    ANTIGRAVITY_OAUTH.endpoints.daily,
+    ANTIGRAVITY_OAUTH.endpoints.autopush,
+  ];
+  for (const base of bases) {
+    try {
+      const res = await fetch(`${base}/v1internal:loadCodeAssist`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+          "User-Agent": "google-api-nodejs-client/9.15.1",
+          "Client-Metadata": JSON.stringify({
+            ideType: "ANTIGRAVITY",
+            platform: "MACOS",
+            pluginType: "GEMINI",
+          }),
+        },
+        body: JSON.stringify({
+          metadata: {
+            ideType: "ANTIGRAVITY",
+            platform: "MACOS",
+            pluginType: "GEMINI",
+          },
+        }),
+      });
+      if (!res.ok) continue;
+      const data = (await res.json()) as {
+        cloudaicompanionProject?: string | { id?: string };
+      };
+      if (typeof data.cloudaicompanionProject === "string") {
+        return data.cloudaicompanionProject;
+      }
+      if (
+        data.cloudaicompanionProject &&
+        typeof data.cloudaicompanionProject.id === "string"
+      ) {
+        return data.cloudaicompanionProject.id;
+      }
+    } catch {
+      // try next
+    }
+  }
+  return ANTIGRAVITY_OAUTH.defaultProjectId;
+}
+
+export async function completeAntigravityOAuth(input: {
+  userId: string;
+  flowId: string;
+  callbackUrlOrCode: string;
+}) {
+  const flow = await db.getPendingFlow(input.flowId, input.userId);
+  if (!flow || flow.provider !== "antigravity") {
+    throw new Error("Antigravity OAuth flow not found or expired");
+  }
+  const statePayload = JSON.parse(decryptSecret(flow.encryptedState)) as {
+    verifier: string;
+    state: string;
+  };
+
+  let code = input.callbackUrlOrCode.trim();
+  let returnedState: string | null = null;
+  try {
+    if (code.includes("://")) {
+      const url = new URL(code);
+      code = url.searchParams.get("code") || "";
+      returnedState = url.searchParams.get("state");
+    }
+  } catch {
+    // raw code
+  }
+  if (!code) throw new Error("Missing authorization code");
+  if (returnedState && returnedState !== statePayload.state) {
+    throw new Error("State mismatch");
+  }
+
+  const res = await fetch(ANTIGRAVITY_OAUTH.tokenUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+      Accept: "*/*",
+      "User-Agent": "google-api-nodejs-client/9.15.1",
+    },
+    body: new URLSearchParams({
+      client_id: ANTIGRAVITY_OAUTH.clientId,
+      client_secret: ANTIGRAVITY_OAUTH.clientSecret,
+      code,
+      grant_type: "authorization_code",
+      redirect_uri: ANTIGRAVITY_OAUTH.redirectUri,
+      code_verifier: statePayload.verifier,
+    }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Antigravity token exchange failed: ${res.status} ${text}`);
+  }
+  const json = (await res.json()) as {
+    access_token: string;
+    refresh_token?: string;
+    expires_in?: number;
+  };
+  if (!json.refresh_token) {
+    throw new Error("Missing Antigravity refresh token — retry with prompt=consent");
+  }
+
+  let email: string | undefined;
+  try {
+    const userRes = await fetch(ANTIGRAVITY_OAUTH.userInfoUrl, {
+      headers: { Authorization: `Bearer ${json.access_token}` },
+    });
+    if (userRes.ok) {
+      const info = (await userRes.json()) as { email?: string };
+      email = info.email;
+    }
+  } catch {
+    // optional
+  }
+
+  const projectId = await fetchAntigravityProjectId(json.access_token);
+  const conn = await db.upsertConnection({
+    userId: input.userId,
+    provider: "antigravity",
     status: "connected",
-    label: `ChatGPT ${accountId.slice(0, 8)}`,
+    label: email ? `Antigravity ${email}` : `Antigravity ${projectId.slice(0, 12)}`,
     encryptedPayload: storeProviderSecret({
-      type: "chatgpt_oauth",
-      accessToken: tokens.accessToken,
-      refreshToken: tokens.refreshToken,
-      idToken: tokens.idToken,
-      expiresAt: tokens.expiresAt,
-      accountId,
-      isFedRamp,
-      raw: tokens as unknown as Record<string, unknown>,
+      type: "antigravity_oauth",
+      accessToken: json.access_token,
+      refreshToken: json.refresh_token,
+      expiresAt: json.expires_in
+        ? Date.now() + json.expires_in * 1000
+        : undefined,
+      projectId,
+      raw: { ...json, email, projectId } as unknown as Record<string, unknown>,
     }),
     meta: {
-      method: "openai_oauth",
-      source: "https://github.com/EvanZhouDev/openai-oauth",
-      sdk: "@openai-oauth/react",
+      method: "google_oauth",
+      source: ANTIGRAVITY_OAUTH.docsUrl,
+      projectId,
+      email,
     },
   });
+  await db.deletePendingFlow(input.flowId);
+  return conn;
 }
 
 export async function connectClaudeSetupToken(userId: string, setupToken: string) {
