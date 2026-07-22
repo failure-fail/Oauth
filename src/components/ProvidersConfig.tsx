@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
-import { useSignInWithChatGPT } from "@openai-oauth/react";
 import { PROVIDERS, type ProviderId, type ProviderMeta } from "@/lib/providers-meta";
 
 type Connection = {
@@ -22,6 +21,14 @@ type CodexFlow = {
   instructions: string[];
 };
 
+type AntigravityFlow = {
+  flowId: string;
+  authorizeUrl: string;
+  redirectUri: string;
+  port: number;
+  instructions: string[];
+};
+
 type GrokFlow = {
   flowId: string;
   userCode: string;
@@ -32,8 +39,8 @@ type GrokFlow = {
 
 function ProviderGlyph({ id }: { id: ProviderId }) {
   const letter =
-    id === "chatgpt"
-      ? "G"
+    id === "antigravity"
+      ? "A"
       : id === "codex"
         ? "X"
         : id === "claude"
@@ -65,8 +72,8 @@ function ProviderButton({
         {
           "--provider-accent": provider.accent,
           "--provider-accent-soft": provider.accentSoft,
-} as CSSProperties
-        }
+        } as CSSProperties
+      }
       disabled={busy}
       onClick={onClick}
     >
@@ -95,6 +102,8 @@ export function ProvidersConfig({
   const [message, setMessage] = useState<string | null>(null);
   const [codexFlow, setCodexFlow] = useState<CodexFlow | null>(null);
   const [codexCode, setCodexCode] = useState("");
+  const [antigravityFlow, setAntigravityFlow] = useState<AntigravityFlow | null>(null);
+  const [antigravityCode, setAntigravityCode] = useState("");
   const [claudeToken, setClaudeToken] = useState("");
   const [claudeAck, setClaudeAck] = useState(false);
   const [grokFlow, setGrokFlow] = useState<GrokFlow | null>(null);
@@ -128,32 +137,6 @@ export function ProvidersConfig({
     }
     return data;
   }
-
-  const chatgpt = useSignInWithChatGPT({
-    onSuccess: async (session) => {
-      try {
-        await call({
-          action: "chatgpt_connect",
-          accessToken: session.accessToken,
-          refreshToken: session.refreshToken,
-          idToken: session.idToken,
-          expiresAt: session.expiresAt
-            ? Date.parse(session.expiresAt)
-            : undefined,
-          accountId: session.accountId,
-          isFedRamp: session.isFedRamp,
-        });
-        setMessage("ChatGPT connected automatically.");
-        setActive(null);
-        await refresh();
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "ChatGPT sync failed");
-      }
-    },
-    onError: (err) => {
-      setError(err.message || "ChatGPT sign-in failed");
-    },
-  });
 
   useEffect(() => {
     if (!codexFlow) return;
@@ -207,9 +190,6 @@ export function ProvidersConfig({
 
   async function disconnect(provider: ProviderId) {
     await call({ action: "disconnect", provider });
-    if (provider === "chatgpt" && chatgpt.isSignedIn) {
-      await chatgpt.logout();
-    }
     setMessage(`${provider} disconnected.`);
     await refresh();
   }
@@ -220,11 +200,6 @@ export function ProvidersConfig({
         {PROVIDERS.map((provider) => {
           const conn = byProvider.get(provider.id);
           const open = active === provider.id;
-          const chatgptBusy =
-            provider.id === "chatgpt" &&
-            (chatgpt.status === "checking" ||
-              chatgpt.status === "starting" ||
-              chatgpt.status === "redirecting");
 
           return (
             <section
@@ -248,47 +223,7 @@ export function ProvidersConfig({
               {provider.risk && <p className="risk-banner">{provider.risk}</p>}
 
               <div className="provider-tile__actions">
-                {provider.id === "chatgpt" && !conn ? (
-                  <>
-                    <ProviderButton
-                      provider={provider}
-                      connected={false}
-                      busy={busy || chatgptBusy}
-                      label={
-                        chatgpt.status === "needs-extension"
-                          ? "Install extension to continue"
-                          : chatgptBusy
-                            ? "Connecting ChatGPT…"
-                            : provider.buttonLabel
-                      }
-                      onClick={async () => {
-                        setError(null);
-                        setMessage(null);
-                        if (chatgpt.status === "needs-extension") {
-                          window.open(chatgpt.installUrl, "_blank", "noopener");
-                          return;
-                        }
-                        setActive("chatgpt");
-                        await chatgpt.login();
-                      }}
-                    />
-                    {chatgpt.status === "needs-extension" && (
-                      <p className="muted">
-                        Install{" "}
-                        <a
-                          className="text-link"
-                          href={chatgpt.installUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          Sign in with ChatGPT
-                        </a>
-                        , then click the button again. Failure will sync tokens
-                        automatically.
-                      </p>
-                    )}
-                  </>
-                ) : !conn ? (
+                {!conn ? (
                   <ProviderButton
                     provider={provider}
                     connected={false}
@@ -409,9 +344,71 @@ export function ProvidersConfig({
                 </div>
               )}
 
-              {open && provider.id === "chatgpt" && chatgpt.status === "signed-in" && !conn && (
+              {open && provider.id === "antigravity" && (
                 <div className="provider-form">
-                  <p className="muted">Syncing ChatGPT session into Failure…</p>
+                  {!antigravityFlow ? (
+                    <button
+                      type="button"
+                      className="btn-primary"
+                      disabled={busy}
+                      onClick={async () => {
+                        const data = await call({ action: "antigravity_start" });
+                        setAntigravityFlow(data);
+                      }}
+                    >
+                      Start Antigravity Google OAuth
+                    </button>
+                  ) : (
+                    <>
+                      <p className="muted">
+                        Google OAuth PKCE with loopback callback on{" "}
+                        <code>{antigravityFlow.redirectUri}</code>
+                        {antigravityFlow.port
+                          ? ` (port ${antigravityFlow.port})`
+                          : ""}
+                        .
+                      </p>
+                      <ol>
+                        {antigravityFlow.instructions.map((line) => (
+                          <li key={line}>{line}</li>
+                        ))}
+                      </ol>
+                      <a
+                        className="btn-secondary"
+                        href={antigravityFlow.authorizeUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{ textAlign: "center" }}
+                      >
+                        Open authorize URL
+                      </a>
+                      <textarea
+                        value={antigravityCode}
+                        onChange={(e) => setAntigravityCode(e.target.value)}
+                        placeholder={`Paste ${antigravityFlow.redirectUri}?code=…&state=…`}
+                        rows={3}
+                      />
+                      <button
+                        type="button"
+                        className="btn-primary"
+                        disabled={busy || !antigravityCode}
+                        onClick={async () => {
+                          await call({
+                            action: "antigravity_complete",
+                            flowId: antigravityFlow.flowId,
+                            callbackUrlOrCode: antigravityCode,
+                          });
+                          setAntigravityFlow(null);
+                          setAntigravityCode("");
+                          setActive(null);
+                          setMessage("Antigravity connected.");
+                          await refresh();
+                        }}
+                      >
+                        Complete with pasted callback
+                      </button>
+                    </>
+                  )}
                 </div>
               )}
 
