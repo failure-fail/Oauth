@@ -12,7 +12,7 @@ export async function verifyPassword(password: string, hash: string) {
 }
 
 export async function createUserSession(user: User) {
-  const session = db.createSession(user.id);
+  const session = await db.createSession(user.id);
   const jar = await cookies();
   jar.set(config.sessionCookie, session.id, {
     httpOnly: true,
@@ -27,7 +27,7 @@ export async function createUserSession(user: User) {
 export async function destroyUserSession() {
   const jar = await cookies();
   const id = jar.get(config.sessionCookie)?.value;
-  if (id) db.deleteSession(id);
+  if (id) await db.deleteSession(id);
   jar.delete(config.sessionCookie);
 }
 
@@ -35,7 +35,7 @@ export async function getCurrentUser(): Promise<User | null> {
   const jar = await cookies();
   const id = jar.get(config.sessionCookie)?.value;
   if (!id) return null;
-  const session = db.getSession(id);
+  const session = await db.getSession(id);
   if (!session) return null;
   return db.findUserById(session.userId);
 }

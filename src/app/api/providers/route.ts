@@ -19,7 +19,9 @@ export async function GET() {
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  const connections = db.listConnections(user.id).map(connectionPublicView);
+  const connections = (await db.listConnections(user.id)).map(
+    connectionPublicView,
+  );
   return NextResponse.json({
     providers: PROVIDERS,
     connections,
@@ -73,7 +75,7 @@ export async function POST(req: Request) {
     const body = actionSchema.parse(await req.json());
     switch (body.action) {
       case "codex_start": {
-        const flow = startCodexDesktopOAuth(user.id);
+        const flow = await startCodexDesktopOAuth(user.id);
         return NextResponse.json(flow);
       }
       case "codex_complete": {
@@ -85,11 +87,11 @@ export async function POST(req: Request) {
         return NextResponse.json({ connection: connectionPublicView(conn) });
       }
       case "chatgpt_connect": {
-        const conn = connectChatGptTokens(user.id, body);
+        const conn = await connectChatGptTokens(user.id, body);
         return NextResponse.json({ connection: connectionPublicView(conn) });
       }
       case "claude_connect": {
-        const conn = connectClaudeSetupToken(user.id, body.setupToken);
+        const conn = await connectClaudeSetupToken(user.id, body.setupToken);
         return NextResponse.json({ connection: connectionPublicView(conn) });
       }
       case "grok_start": {
@@ -104,11 +106,11 @@ export async function POST(req: Request) {
         return NextResponse.json(result);
       }
       case "cursor_connect": {
-        const conn = connectCursorAccountKey(user.id, body.accountKey);
+        const conn = await connectCursorAccountKey(user.id, body.accountKey);
         return NextResponse.json({ connection: connectionPublicView(conn) });
       }
       case "disconnect": {
-        db.deleteConnection(user.id, body.provider as ProviderId);
+        await db.deleteConnection(user.id, body.provider as ProviderId);
         return NextResponse.json({ ok: true });
       }
     }

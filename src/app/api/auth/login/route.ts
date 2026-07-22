@@ -15,7 +15,7 @@ const schema = z.object({
 export async function POST(req: Request) {
   try {
     const body = schema.parse(await req.json());
-    const user = db.findUserByEmail(body.email);
+    const user = await db.findUserByEmail(body.email);
     if (!user || !(await verifyPassword(body.password, user.passwordHash))) {
       return NextResponse.json(
         { error: "Invalid email or password" },

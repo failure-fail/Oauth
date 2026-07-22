@@ -23,7 +23,7 @@ async function authenticateClient(
     clientSecret = secret || clientSecret;
   }
   if (!clientId) return null;
-  const client = db.findClientByClientId(clientId);
+  const client = await db.findClientByClientId(clientId);
   if (!client) return null;
   if (client.public) {
     return { clientId, ok: true, publicClient: true };
@@ -45,7 +45,7 @@ export async function POST(req: Request) {
       { status: 401 },
     );
   }
-  const client = db.findClientByClientId(auth.clientId);
+  const client = await db.findClientByClientId(auth.clientId);
   if (!client) {
     return NextResponse.json({ error: "invalid_client" }, { status: 401 });
   }
@@ -60,7 +60,7 @@ export async function POST(req: Request) {
         { status: 400 },
       );
     }
-    const authCode = db.consumeAuthCode(code);
+    const authCode = await db.consumeAuthCode(code);
     if (!authCode) {
       return NextResponse.json({ error: "invalid_grant" }, { status: 400 });
     }
@@ -82,7 +82,7 @@ export async function POST(req: Request) {
         { status: 400 },
       );
     }
-    const user = db.findUserById(authCode.userId);
+    const user = await db.findUserById(authCode.userId);
     if (!user) {
       return NextResponse.json({ error: "invalid_grant" }, { status: 400 });
     }
@@ -94,7 +94,7 @@ export async function POST(req: Request) {
       name: user.name,
     });
     const refreshToken = authCode.scope.includes("offline_access")
-      ? issueRefreshToken({
+      ? await issueRefreshToken({
           clientId: client.clientId,
           userId: user.id,
           scope: authCode.scope,
@@ -111,15 +111,15 @@ export async function POST(req: Request) {
 
   if (grantType === "refresh_token") {
     const refresh = form.get("refresh_token") || "";
-    const row = db.findRefreshToken(hashToken(refresh));
+    const row = await db.findRefreshToken(hashToken(refresh));
     if (!row || row.clientId !== client.clientId) {
       return NextResponse.json({ error: "invalid_grant" }, { status: 400 });
     }
-    const user = db.findUserById(row.userId);
+    const user = await db.findUserById(row.userId);
     if (!user) {
       return NextResponse.json({ error: "invalid_grant" }, { status: 400 });
     }
-    db.revokeRefreshToken(hashToken(refresh));
+    await db.revokeRefreshToken(hashToken(refresh));
     const accessToken = await mintAccessToken({
       userId: user.id,
       clientId: client.clientId,
@@ -127,7 +127,7 @@ export async function POST(req: Request) {
       email: user.email,
       name: user.name,
     });
-    const newRefresh = issueRefreshToken({
+    const newRefresh = await issueRefreshToken({
       clientId: client.clientId,
       userId: user.id,
       scope: row.scope,

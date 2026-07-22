@@ -14,7 +14,7 @@ export default async function AuthorizePage({
   const scope =
     params.scope || "openid profile email providers offline_access";
   const state = params.state;
-  const client = clientId ? db.findClientByClientId(clientId) : null;
+  const client = clientId ? await db.findClientByClientId(clientId) : null;
 
   if (!clientId || !redirectUri) {
     return (

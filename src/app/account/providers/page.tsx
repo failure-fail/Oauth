@@ -10,7 +10,9 @@ export default async function AccountProvidersPage() {
   const user = await getCurrentUser();
   if (!user) redirect("/login?next=/account/providers");
 
-  const connections = db.listConnections(user.id).map(connectionPublicView);
+  const connections = (await db.listConnections(user.id)).map(
+    connectionPublicView,
+  );
   const connectedCount = connections.length;
 
   return (

@@ -12,8 +12,10 @@ export default async function DashboardPage() {
   const user = await getCurrentUser();
   if (!user) redirect("/login");
 
-  const connections = db.listConnections(user.id).map(connectionPublicView);
-  const apps = db.listClients(user.id).map((c) => ({
+  const connections = (await db.listConnections(user.id)).map(
+    connectionPublicView,
+  );
+  const apps = (await db.listClients(user.id)).map((c) => ({
     id: c.id,
     name: c.name,
     clientId: c.clientId,

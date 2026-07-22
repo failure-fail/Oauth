@@ -8,9 +8,9 @@ export async function GET() {
   if (!user) {
     return NextResponse.json({ user: null }, { status: 401 });
   }
-  const connections = db
-    .listConnections(user.id)
-    .map(connectionPublicView);
+  const connections = (await db.listConnections(user.id)).map(
+    connectionPublicView,
+  );
   return NextResponse.json({
     user: publicUser(user),
     connections,

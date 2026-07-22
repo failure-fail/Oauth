@@ -57,7 +57,7 @@ export async function verifyAccessToken(token: string) {
   return payload;
 }
 
-export function issueAuthorizationCode(input: {
+export async function issueAuthorizationCode(input: {
   clientId: string;
   userId: string;
   redirectUri: string;
@@ -66,7 +66,7 @@ export function issueAuthorizationCode(input: {
   scope: string;
 }) {
   const code = randomToken(24);
-  db.saveAuthCode({
+  await db.saveAuthCode({
     code,
     clientId: input.clientId,
     userId: input.userId,
@@ -80,13 +80,13 @@ export function issueAuthorizationCode(input: {
   return code;
 }
 
-export function issueRefreshToken(input: {
+export async function issueRefreshToken(input: {
   clientId: string;
   userId: string;
   scope: string;
 }) {
   const token = `frt_${randomToken(32)}`;
-  db.saveRefreshToken({
+  await db.saveRefreshToken({
     tokenHash: hashToken(token),
     clientId: input.clientId,
     userId: input.userId,

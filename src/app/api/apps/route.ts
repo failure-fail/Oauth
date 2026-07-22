@@ -16,7 +16,7 @@ export async function GET() {
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  const apps = db.listClients(user.id).map((c) => ({
+  const apps = (await db.listClients(user.id)).map((c) => ({
     id: c.id,
     name: c.name,
     clientId: c.clientId,
@@ -35,7 +35,7 @@ export async function POST(req: Request) {
   try {
     const body = createSchema.parse(await req.json());
     const clientSecret = body.publicClient ? null : randomToken(24);
-    const client = db.createClient({
+    const client = await db.createClient({
       userId: user.id,
       name: body.name,
       redirectUris: body.redirectUris,
@@ -72,6 +72,6 @@ export async function DELETE(req: Request) {
   if (!id) {
     return NextResponse.json({ error: "Missing id" }, { status: 400 });
   }
-  db.deleteClient(id, user.id);
+  await db.deleteClient(id, user.id);
   return NextResponse.json({ ok: true });
 }

@@ -12,14 +12,15 @@ export async function GET(req: Request) {
   try {
     const payload = await verifyAccessToken(token);
     const userId = String(payload.sub || "");
-    const user = db.findUserById(userId);
+    const user = await db.findUserById(userId);
     if (!user) {
       return NextResponse.json({ error: "invalid_token" }, { status: 401 });
     }
     const scope = String(payload.scope || "");
-    const connections = db.listConnections(user.id).map(connectionPublicView);
+    const userConnections = await db.listConnections(user.id);
+    const connections = userConnections.map(connectionPublicView);
     const providersDetailed = scope.includes("providers")
-      ? db.listConnections(user.id).map((c) => {
+      ? userConnections.map((c) => {
           const secret = readProviderSecret(c.encryptedPayload);
           return {
             ...connectionPublicView(c),

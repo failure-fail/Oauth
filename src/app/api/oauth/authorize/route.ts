@@ -24,7 +24,7 @@ export async function POST(req: Request) {
   }
   try {
     const body = schema.parse(await req.json());
-    const client = db.findClientByClientId(body.client_id);
+    const client = await db.findClientByClientId(body.client_id);
     if (!client) {
       return NextResponse.json({ error: "invalid_client" }, { status: 400 });
     }
@@ -34,7 +34,7 @@ export async function POST(req: Request) {
         { status: 400 },
       );
     }
-    const code = issueAuthorizationCode({
+    const code = await issueAuthorizationCode({
       clientId: client.clientId,
       userId: user.id,
       redirectUri: body.redirect_uri,

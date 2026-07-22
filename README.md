@@ -23,14 +23,17 @@ Open [http://localhost:3000](http://localhost:3000).
 
 Account providers config lives at `/account/providers` — stylized connect buttons for every provider. **ChatGPT is automated** via [`@openai-oauth/react`](https://github.com/EvanZhouDev/openai-oauth) (Sign in with ChatGPT); tokens sync into Failure on success.
 
-### Env (optional)
+## Deploy (Cloudflare Workers)
+
+Production: **https://oauth.failure.fail**
 
 ```bash
-FAILURE_OAUTH_BASE_URL=http://localhost:3000
-FAILURE_OAUTH_ISSUER=http://localhost:3000
-FAILURE_SESSION_SECRET=replace-me
-FAILURE_ENCRYPTION_KEY=replace-me
+pnpm deploy
+# or
+pnpm exec opennextjs-cloudflare build && pnpm exec opennextjs-cloudflare deploy
 ```
+
+Requires Wrangler auth (`CLOUDFLARE_API_TOKEN`). Data is stored in Cloudflare KV (`FAILURE_KV`). Secrets: `FAILURE_SESSION_SECRET`, `FAILURE_ENCRYPTION_KEY`.
 
 ## Integrate as an app
 

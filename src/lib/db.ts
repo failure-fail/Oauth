@@ -1,5 +1,3 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
-import path from "path";
 import { randomUUID } from "crypto";
 import type { ProviderId } from "./config";
 
@@ -89,40 +87,84 @@ const emptyDb = (): Database => ({
   pendingFlows: [],
 });
 
-function dbPath() {
-  const dir = path.join(process.cwd(), "data");
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  return path.join(dir, "store.json");
-}
+const STORE_KEY = "failure-oauth:store";
 
-let cache: Database | null = null;
+type KvLike = {
+  get: (key: string) => Promise<string | null>;
+  put: (key: string, value: string) => Promise<void>;
+};
 
-function readDb(): Database {
-  if (cache) return cache;
-  const file = dbPath();
-  if (!existsSync(file)) {
-    cache = emptyDb();
-    writeDb(cache);
-    return cache;
+let memoryFallback: Database | null = null;
+
+async function getKv(): Promise<KvLike | null> {
+  try {
+    const { getCloudflareContext } = await import("@opennextjs/cloudflare");
+    const ctx = await getCloudflareContext({ async: true });
+    const kv = (ctx.env as { FAILURE_KV?: KvLike }).FAILURE_KV;
+    return kv ?? null;
+  } catch {
+    return null;
   }
-  cache = JSON.parse(readFileSync(file, "utf8")) as Database;
-  return cache;
 }
 
-function writeDb(db: Database) {
-  cache = db;
-  writeFileSync(dbPath(), JSON.stringify(db, null, 2));
+async function readDb(): Promise<Database> {
+  const kv = await getKv();
+  if (kv) {
+    const raw = await kv.get(STORE_KEY);
+    if (!raw) {
+      const fresh = emptyDb();
+      await kv.put(STORE_KEY, JSON.stringify(fresh));
+      return fresh;
+    }
+    return JSON.parse(raw) as Database;
+  }
+
+  // Local/dev fallback: in-memory (optionally hydrated from disk)
+  if (memoryFallback) return memoryFallback;
+  try {
+    const { existsSync, mkdirSync, readFileSync } = await import("fs");
+    const path = await import("path");
+    const dir = path.join(process.cwd(), "data");
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, "store.json");
+    if (existsSync(file)) {
+      memoryFallback = JSON.parse(readFileSync(file, "utf8")) as Database;
+      return memoryFallback;
+    }
+  } catch {
+    // ignore fs in restricted runtimes
+  }
+  memoryFallback = emptyDb();
+  return memoryFallback;
 }
 
-function mutate<T>(fn: (db: Database) => T): T {
-  const db = readDb();
-  const result = fn(db);
-  writeDb(db);
+async function writeDb(dbData: Database) {
+  const kv = await getKv();
+  if (kv) {
+    await kv.put(STORE_KEY, JSON.stringify(dbData));
+    return;
+  }
+  memoryFallback = dbData;
+  try {
+    const { mkdirSync, writeFileSync } = await import("fs");
+    const path = await import("path");
+    const dir = path.join(process.cwd(), "data");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path.join(dir, "store.json"), JSON.stringify(dbData, null, 2));
+  } catch {
+    // ignore fs in restricted runtimes
+  }
+}
+
+async function mutate<T>(fn: (dbData: Database) => T): Promise<T> {
+  const dbData = await readDb();
+  const result = fn(dbData);
+  await writeDb(dbData);
   return result;
 }
 
 export const db = {
-  createUser(input: Omit<User, "id" | "createdAt">) {
+  async createUser(input: Omit<User, "id" | "createdAt">) {
     return mutate((store) => {
       if (store.users.some((u) => u.email === input.email.toLowerCase())) {
         throw new Error("Email already registered");
@@ -139,15 +181,17 @@ export const db = {
     });
   },
 
-  findUserByEmail(email: string) {
-    return readDb().users.find((u) => u.email === email.toLowerCase()) ?? null;
+  async findUserByEmail(email: string) {
+    const store = await readDb();
+    return store.users.find((u) => u.email === email.toLowerCase()) ?? null;
   },
 
-  findUserById(id: string) {
-    return readDb().users.find((u) => u.id === id) ?? null;
+  async findUserById(id: string) {
+    const store = await readDb();
+    return store.users.find((u) => u.id === id) ?? null;
   },
 
-  createSession(userId: string, ttlMs = 1000 * 60 * 60 * 24 * 14) {
+  async createSession(userId: string, ttlMs = 1000 * 60 * 60 * 24 * 14) {
     return mutate((store) => {
       const session: Session = {
         id: randomUUID(),
@@ -159,19 +203,20 @@ export const db = {
     });
   },
 
-  getSession(id: string) {
-    const session = readDb().sessions.find((s) => s.id === id);
+  async getSession(id: string) {
+    const store = await readDb();
+    const session = store.sessions.find((s) => s.id === id);
     if (!session || session.expiresAt < Date.now()) return null;
     return session;
   },
 
-  deleteSession(id: string) {
-    mutate((store) => {
+  async deleteSession(id: string) {
+    await mutate((store) => {
       store.sessions = store.sessions.filter((s) => s.id !== id);
     });
   },
 
-  createClient(
+  async createClient(
     input: Omit<OAuthClient, "id" | "createdAt" | "clientId"> & {
       clientId?: string;
     },
@@ -192,23 +237,25 @@ export const db = {
     });
   },
 
-  listClients(userId: string) {
-    return readDb().clients.filter((c) => c.userId === userId);
+  async listClients(userId: string) {
+    const store = await readDb();
+    return store.clients.filter((c) => c.userId === userId);
   },
 
-  findClientByClientId(clientId: string) {
-    return readDb().clients.find((c) => c.clientId === clientId) ?? null;
+  async findClientByClientId(clientId: string) {
+    const store = await readDb();
+    return store.clients.find((c) => c.clientId === clientId) ?? null;
   },
 
-  deleteClient(id: string, userId: string) {
-    mutate((store) => {
+  async deleteClient(id: string, userId: string) {
+    await mutate((store) => {
       store.clients = store.clients.filter(
         (c) => !(c.id === id && c.userId === userId),
       );
     });
   },
 
-  upsertConnection(
+  async upsertConnection(
     input: Omit<ProviderConnection, "id" | "connectedAt" | "updatedAt"> & {
       id?: string;
     },
@@ -242,34 +289,36 @@ export const db = {
     });
   },
 
-  listConnections(userId: string) {
-    return readDb().connections.filter((c) => c.userId === userId);
+  async listConnections(userId: string) {
+    const store = await readDb();
+    return store.connections.filter((c) => c.userId === userId);
   },
 
-  getConnection(userId: string, provider: ProviderId) {
+  async getConnection(userId: string, provider: ProviderId) {
+    const store = await readDb();
     return (
-      readDb().connections.find(
+      store.connections.find(
         (c) => c.userId === userId && c.provider === provider,
       ) ?? null
     );
   },
 
-  deleteConnection(userId: string, provider: ProviderId) {
-    mutate((store) => {
+  async deleteConnection(userId: string, provider: ProviderId) {
+    await mutate((store) => {
       store.connections = store.connections.filter(
         (c) => !(c.userId === userId && c.provider === provider),
       );
     });
   },
 
-  saveAuthCode(code: AuthCode) {
-    mutate((store) => {
+  async saveAuthCode(code: AuthCode) {
+    await mutate((store) => {
       store.authCodes = store.authCodes.filter((c) => c.expiresAt > Date.now());
       store.authCodes.push(code);
     });
   },
 
-  consumeAuthCode(code: string) {
+  async consumeAuthCode(code: string) {
     return mutate((store) => {
       const row = store.authCodes.find((c) => c.code === code);
       if (!row || row.used || row.expiresAt < Date.now()) return null;
@@ -278,29 +327,31 @@ export const db = {
     });
   },
 
-  saveRefreshToken(token: RefreshToken) {
-    mutate((store) => {
+  async saveRefreshToken(token: RefreshToken) {
+    await mutate((store) => {
       store.refreshTokens.push(token);
     });
   },
 
-  findRefreshToken(tokenHash: string) {
+  async findRefreshToken(tokenHash: string) {
+    const store = await readDb();
     return (
-      readDb().refreshTokens.find(
-        (t) => t.tokenHash === tokenHash && !t.revoked && t.expiresAt > Date.now(),
+      store.refreshTokens.find(
+        (t) =>
+          t.tokenHash === tokenHash && !t.revoked && t.expiresAt > Date.now(),
       ) ?? null
     );
   },
 
-  revokeRefreshToken(tokenHash: string) {
-    mutate((store) => {
+  async revokeRefreshToken(tokenHash: string) {
+    await mutate((store) => {
       const row = store.refreshTokens.find((t) => t.tokenHash === tokenHash);
       if (row) row.revoked = true;
     });
   },
 
-  savePendingFlow(flow: PendingProviderFlow) {
-    mutate((store) => {
+  async savePendingFlow(flow: PendingProviderFlow) {
+    await mutate((store) => {
       store.pendingFlows = store.pendingFlows.filter(
         (f) => f.expiresAt > Date.now(),
       );
@@ -308,16 +359,17 @@ export const db = {
     });
   },
 
-  getPendingFlow(id: string, userId: string) {
-    const flow = readDb().pendingFlows.find(
+  async getPendingFlow(id: string, userId: string) {
+    const store = await readDb();
+    const flow = store.pendingFlows.find(
       (f) => f.id === id && f.userId === userId,
     );
     if (!flow || flow.expiresAt < Date.now()) return null;
     return flow;
   },
 
-  deletePendingFlow(id: string) {
-    mutate((store) => {
+  async deletePendingFlow(id: string) {
+    await mutate((store) => {
       store.pendingFlows = store.pendingFlows.filter((f) => f.id !== id);
     });
   },

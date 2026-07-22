@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import { CODEX_OAUTH, GROK_OAUTH, type ProviderId } from "./config";
 import { encryptSecret, decryptSecret, pkceChallengeFromVerifier } from "./crypto";
-import { db } from "./db";
+import { db, type ProviderConnection } from "./db";
 import { randomToken } from "./config";
 
 export type StoredProviderSecret = {
@@ -22,7 +22,7 @@ export function readProviderSecret(encrypted: string): StoredProviderSecret {
   return JSON.parse(decryptSecret(encrypted)) as StoredProviderSecret;
 }
 
-export function startCodexDesktopOAuth(userId: string) {
+export async function startCodexDesktopOAuth(userId: string) {
   const verifier = randomToken(48);
   const challenge = pkceChallengeFromVerifier(verifier);
   const state = randomToken(24);
@@ -39,7 +39,7 @@ export function startCodexDesktopOAuth(userId: string) {
   });
   const authorizeUrl = `${CODEX_OAUTH.authorizeUrl}?${params.toString()}`;
   const flowId = randomUUID();
-  db.savePendingFlow({
+  await db.savePendingFlow({
     id: flowId,
     userId,
     provider: "codex",
@@ -65,7 +65,7 @@ export async function completeCodexDesktopOAuth(input: {
   flowId: string;
   callbackUrlOrCode: string;
 }) {
-  const flow = db.getPendingFlow(input.flowId, input.userId);
+  const flow = await db.getPendingFlow(input.flowId, input.userId);
   if (!flow || flow.provider !== "codex") {
     throw new Error("Codex flow not found or expired");
   }
@@ -115,7 +115,7 @@ export async function completeCodexDesktopOAuth(input: {
     refresh_token?: string;
     expires_in?: number;
   };
-  const conn = db.upsertConnection({
+  const conn = await db.upsertConnection({
     userId: input.userId,
     provider: "codex",
     status: "connected",
@@ -131,11 +131,11 @@ export async function completeCodexDesktopOAuth(input: {
     }),
     meta: { method: "desktop_oauth" },
   });
-  db.deletePendingFlow(input.flowId);
+  await db.deletePendingFlow(input.flowId);
   return conn;
 }
 
-export function connectChatGptTokens(
+export async function connectChatGptTokens(
   userId: string,
   tokens: {
     accessToken: string;
@@ -144,7 +144,7 @@ export function connectChatGptTokens(
     accountId?: string;
   },
 ) {
-  return db.upsertConnection({
+  return await db.upsertConnection({
     userId,
     provider: "chatgpt",
     status: "connected",
@@ -165,10 +165,10 @@ export function connectChatGptTokens(
   });
 }
 
-export function connectClaudeSetupToken(userId: string, setupToken: string) {
+export async function connectClaudeSetupToken(userId: string, setupToken: string) {
   const token = setupToken.trim();
   if (!token) throw new Error("Setup token required");
-  return db.upsertConnection({
+  return await db.upsertConnection({
     userId,
     provider: "claude",
     status: "connected",
@@ -214,7 +214,7 @@ export async function startGrokDeviceOAuth(userId: string) {
     interval?: number;
   };
   const flowId = randomUUID();
-  db.savePendingFlow({
+  await db.savePendingFlow({
     id: flowId,
     userId,
     provider: "grok",
@@ -240,7 +240,7 @@ export async function pollGrokDeviceOAuth(input: {
   userId: string;
   flowId: string;
 }) {
-  const flow = db.getPendingFlow(input.flowId, input.userId);
+  const flow = await db.getPendingFlow(input.flowId, input.userId);
   if (!flow || flow.provider !== "grok") {
     throw new Error("Grok flow not found or expired");
   }
@@ -284,7 +284,7 @@ export async function pollGrokDeviceOAuth(input: {
     );
   }
   if (!json.access_token) throw new Error("Missing Grok access token");
-  const conn = db.upsertConnection({
+  const conn = await db.upsertConnection({
     userId: input.userId,
     provider: "grok",
     status: "connected",
@@ -300,14 +300,14 @@ export async function pollGrokDeviceOAuth(input: {
     }),
     meta: { method: "device_oauth" },
   });
-  db.deletePendingFlow(input.flowId);
+  await db.deletePendingFlow(input.flowId);
   return { status: "connected" as const, connection: conn };
 }
 
-export function connectCursorAccountKey(userId: string, accountKey: string) {
+export async function connectCursorAccountKey(userId: string, accountKey: string) {
   const key = accountKey.trim();
   if (!key) throw new Error("Cursor account key required");
-  return db.upsertConnection({
+  return await db.upsertConnection({
     userId,
     provider: "cursor",
     status: "connected",
@@ -324,9 +324,7 @@ export function connectCursorAccountKey(userId: string, accountKey: string) {
   });
 }
 
-export function connectionPublicView(
-  conn: NonNullable<ReturnType<typeof db.getConnection>>,
-) {
+export function connectionPublicView(conn: ProviderConnection) {
   return {
     id: conn.id,
     provider: conn.provider as ProviderId,

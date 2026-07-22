@@ -16,7 +16,7 @@ const schema = z.object({
 export async function POST(req: Request) {
   try {
     const body = schema.parse(await req.json());
-    const user = db.createUser({
+    const user = await db.createUser({
       email: body.email,
       name: body.name,
       passwordHash: await hashPassword(body.password),
