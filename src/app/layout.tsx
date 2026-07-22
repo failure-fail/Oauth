@@ -44,14 +44,14 @@ export default async function RootLayout({
               {user ? (
                 <>
                   <Link href="/dashboard">Dashboard</Link>
-                  <Link href="/dashboard/chat">Chat</Link>
-                  <Link href="/account/providers">Providers</Link>
                   <LogoutLink />
                 </>
               ) : (
                 <>
                   <Link href="/login">Sign in</Link>
-                  <Link href="/signup">Sign up</Link>
+                  <Link className="nav-cta" href="/signup">
+                    Sign up
+                  </Link>
                 </>
               )}
             </nav>

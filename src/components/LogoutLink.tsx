@@ -7,7 +7,7 @@ export function LogoutLink() {
   return (
     <button
       type="button"
-      className="btn-ghost"
+      className="nav-link-btn"
       onClick={async () => {
         await fetch("/api/auth/logout", { method: "POST" });
         router.push("/");

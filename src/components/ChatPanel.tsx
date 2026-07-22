@@ -70,6 +70,7 @@ export function ChatPanel({
   const [models, setModels] = useState<ProviderModel[]>([]);
   const [model, setModel] = useState("");
   const [modelsFor, setModelsFor] = useState<ProviderId | "">("");
+  const [modelsMeta, setModelsMeta] = useState<string | null>(null);
   const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevel>("medium");
   const [prompt, setPrompt] = useState("Say hello in one short sentence.");
   const [busy, setBusy] = useState(false);
@@ -81,7 +82,7 @@ export function ChatPanel({
       id: "welcome",
       role: "system",
       text: connected.length
-        ? "Choose a provider and model. Codex/Antigravity/Claude support thinking levels and think blocks."
+        ? "Choose a provider and model. Codex, Antigravity, and Claude support thinking levels and think blocks."
         : "Connect a provider first, then come back to test live models.",
     },
   ]);
@@ -102,12 +103,11 @@ export function ChatPanel({
         provider === "antigravity",
     );
 
-  const thinkingOptions =
-    selectedModel?.reasoningLevels?.length
-      ? selectedModel.reasoningLevels
-      : provider === "claude" || provider === "antigravity"
-        ? (["none", "low", "medium", "high"] as ThinkingLevel[])
-        : (["low", "medium", "high", "xhigh"] as ThinkingLevel[]);
+  const thinkingOptions = selectedModel?.reasoningLevels?.length
+    ? selectedModel.reasoningLevels
+    : provider === "claude" || provider === "antigravity"
+      ? (["none", "low", "medium", "high"] as ThinkingLevel[])
+      : (["low", "medium", "high", "xhigh"] as ThinkingLevel[]);
 
   useEffect(() => {
     if (!provider) return;
@@ -127,23 +127,20 @@ export function ChatPanel({
         setModelsFor(providerId);
         setError(null);
         setWarning(data.warning || null);
-        setMessages((m) => [
-          ...m,
-          {
-            id: `models-${Date.now()}`,
-            role: "system",
-            text: next.length
-              ? `Loaded ${next.length} live models from ${providerId}${data.source ? ` · ${data.source}` : ""}${data.transport ? `/${data.transport}` : ""}.`
-              : `No live models from ${providerId}${data.source === "error" ? " (catalog fetch failed — nothing guessed)" : ""}.`,
-            provider: providerId,
-          },
-        ]);
+        setModelsMeta(
+          next.length
+            ? `${next.length} models · ${data.source || "live"}${data.transport ? `/${data.transport}` : ""}`
+            : data.source === "error"
+              ? "Catalog fetch failed"
+              : "No models",
+        );
       })
       .catch((err: unknown) => {
         if (cancelled) return;
         setModels([]);
         setModel("");
         setModelsFor(providerId);
+        setModelsMeta(null);
         setError(err instanceof Error ? err.message : "Failed to fetch models");
       });
 
@@ -152,17 +149,22 @@ export function ChatPanel({
     };
   }, [provider]);
 
-  useEffect(() => {
-    if (!selectedModel) return;
-    if (
-      selectedModel.defaultReasoningLevel &&
-      selectedModel.reasoningLevels?.includes(selectedModel.defaultReasoningLevel)
-    ) {
-      setThinkingLevel(selectedModel.defaultReasoningLevel);
-    } else if (selectedModel.reasoningLevels?.length) {
-      setThinkingLevel(selectedModel.reasoningLevels[0]);
+  function selectModel(nextId: string) {
+    setModel(nextId);
+    setEditImages([]);
+    const next = models.find((m) => m.id === nextId);
+    if (next?.kind === "image" || nextId === "gpt-image-2") {
+      setPrompt("A crisp product photo of a ceramic mug on oak");
     }
-  }, [selectedModel?.id]);
+    if (
+      next?.defaultReasoningLevel &&
+      next.reasoningLevels?.includes(next.defaultReasoningLevel)
+    ) {
+      setThinkingLevel(next.defaultReasoningLevel);
+    } else if (next?.reasoningLevels?.length) {
+      setThinkingLevel(next.reasoningLevels[0]);
+    }
+  }
 
   async function refreshModels() {
     if (!provider) return;
@@ -181,6 +183,11 @@ export function ChatPanel({
       );
       setModelsFor(provider);
       setWarning(data.warning || null);
+      setModelsMeta(
+        next.length
+          ? `${next.length} models · ${data.source || "live"}${data.transport ? `/${data.transport}` : ""}`
+          : "No models",
+      );
     } catch (err) {
       setModelsFor(provider);
       setError(err instanceof Error ? err.message : "Failed to fetch models");
@@ -293,15 +300,6 @@ export function ChatPanel({
     } catch (err) {
       const message = err instanceof Error ? err.message : "Request failed";
       setError(message);
-      setMessages((m) => [
-        ...m,
-        {
-          id: `e-${Date.now()}`,
-          role: "system",
-          text: message,
-          provider,
-        },
-      ]);
     } finally {
       setBusy(false);
     }
@@ -309,7 +307,9 @@ export function ChatPanel({
 
   return (
     <div className="chat-shell">
-      <div className="chat-toolbar">
+      <div
+        className={`chat-toolbar ${supportsThinking ? "has-thinking" : ""}`}
+      >
         <label>
           <span>Provider</span>
           <select
@@ -319,6 +319,7 @@ export function ChatPanel({
               setModelsFor("");
               setModels([]);
               setModel("");
+              setModelsMeta(null);
               setEditImages([]);
             }}
             disabled={!connected.length}
@@ -337,14 +338,7 @@ export function ChatPanel({
           <span>Model {loadingModels ? "· fetching" : "· live"}</span>
           <select
             value={model}
-            onChange={(e) => {
-              setModel(e.target.value);
-              setEditImages([]);
-              const next = models.find((m) => m.id === e.target.value);
-              if (next?.kind === "image" || e.target.value === "gpt-image-2") {
-                setPrompt("A crisp product photo of a ceramic mug on oak");
-              }
-            }}
+            onChange={(e) => selectModel(e.target.value)}
             disabled={!models.length || loadingModels}
           >
             {!models.length && (
@@ -377,7 +371,9 @@ export function ChatPanel({
               ))}
             </select>
           </label>
-        ) : null}
+        ) : (
+          <div className="chat-toolbar__spacer" aria-hidden />
+        )}
         <button
           type="button"
           className="btn-secondary"
@@ -387,6 +383,8 @@ export function ChatPanel({
           Refresh
         </button>
       </div>
+
+      {modelsMeta && <p className="chat-meta muted">{modelsMeta}</p>}
 
       <div className="chat-log" aria-live="polite">
         {messages.map((msg) => (
@@ -465,16 +463,20 @@ export function ChatPanel({
         {isImageModel && supportsImages ? (
           <label className="chat-image-input">
             <span>Optional reference images for edit (up to 5)</span>
-            <input
-              type="file"
-              accept="image/*"
-              multiple
-              onChange={(e) => onFiles(e.target.files)}
-              disabled={busy}
-            />
-            {editImages.length ? (
-              <em>{editImages.length} reference image(s) attached</em>
-            ) : null}
+            <div className="file-pill">
+              <input
+                type="file"
+                accept="image/*"
+                multiple
+                onChange={(e) => onFiles(e.target.files)}
+                disabled={busy}
+              />
+              <em>
+                {editImages.length
+                  ? `${editImages.length} reference image(s) attached`
+                  : "Choose images"}
+              </em>
+            </div>
           </label>
         ) : null}
         <button

@@ -1,8 +1,8 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
 import { SignInWithFailure } from "./SignInWithFailure";
+import { PROVIDERS } from "@/lib/providers-meta";
 
 function base64Url(bytes: ArrayBuffer | Uint8Array) {
   const arr = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
@@ -38,9 +38,9 @@ export function AuthorizeConsent({
   appName: string;
   loggedIn: boolean;
 }) {
-  const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const providerNames = PROVIDERS.map((p) => p.name).join(", ");
   const returnTo = useMemo(() => {
     const params = new URLSearchParams({
       client_id: clientId,
@@ -53,6 +53,17 @@ export function AuthorizeConsent({
     if (state) params.set("state", state);
     return `/oauth/authorize?${params.toString()}`;
   }, [clientId, redirectUri, scope, state]);
+
+  function deny() {
+    try {
+      const target = new URL(redirectUri);
+      target.searchParams.set("error", "access_denied");
+      if (state) target.searchParams.set("state", state);
+      window.location.href = target.toString();
+    } catch {
+      window.location.href = "/";
+    }
+  }
 
   if (!loggedIn) {
     return (
@@ -76,10 +87,10 @@ export function AuthorizeConsent({
       <h1>{appName}</h1>
       <p>
         This app will receive your Failure profile and connected provider
-        credentials for: Codex, Antigravity, Claude Code, and Grok Build.
+        credentials for: {providerNames}.
       </p>
       <ul className="scope-list">
-        {scope.split(/\s+/).map((s) => (
+        {scope.split(/\s+/).filter(Boolean).map((s) => (
           <li key={s}>{s}</li>
         ))}
       </ul>
@@ -115,7 +126,10 @@ export function AuthorizeConsent({
                   response_type: "code",
                   scope,
                   state,
-                  code_challenge: challenge === "pending" ? pkce.challenge : challenge,
+                  code_challenge:
+                    !challenge || challenge === "pending"
+                      ? pkce.challenge
+                      : challenge,
                   code_challenge_method: method,
                 }),
               });
@@ -134,11 +148,7 @@ export function AuthorizeConsent({
         >
           Allow & continue
         </button>
-        <button
-          type="button"
-          className="btn-ghost"
-          onClick={() => router.push("/dashboard")}
-        >
+        <button type="button" className="btn-ghost" onClick={deny}>
           Cancel
         </button>
       </div>

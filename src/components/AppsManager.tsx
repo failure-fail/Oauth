@@ -15,9 +15,12 @@ type AppRow = {
 export function AppsManager({ initialApps }: { initialApps: AppRow[] }) {
   const [apps, setApps] = useState(initialApps);
   const [name, setName] = useState("");
-  const [redirectUri, setRedirectUri] = useState("http://localhost:3000/callback");
+  const [redirectUri, setRedirectUri] = useState(
+    "http://localhost:3000/callback",
+  );
   const [error, setError] = useState<string | null>(null);
-  const [createdSecret, setCreatedSecret] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [createdClientId, setCreatedClientId] = useState<string | null>(null);
 
   async function refresh() {
     const res = await fetch("/api/apps");
@@ -25,10 +28,16 @@ export function AppsManager({ initialApps }: { initialApps: AppRow[] }) {
     setApps(data.apps || []);
   }
 
+  async function copy(text: string, label: string) {
+    await navigator.clipboard.writeText(text);
+    setNotice(`${label} copied.`);
+  }
+
   async function onCreate(e: FormEvent) {
     e.preventDefault();
     setError(null);
-    setCreatedSecret(null);
+    setNotice(null);
+    setCreatedClientId(null);
     const res = await fetch("/api/apps", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -43,7 +52,8 @@ export function AppsManager({ initialApps }: { initialApps: AppRow[] }) {
       setError(data.error || "Failed to create app");
       return;
     }
-    setCreatedSecret(data.app.clientSecret || null);
+    setCreatedClientId(data.app.clientId || null);
+    setNotice("Public PKCE app registered. Copy the client id below.");
     setName("");
     await refresh();
   }
@@ -74,9 +84,19 @@ export function AppsManager({ initialApps }: { initialApps: AppRow[] }) {
         </button>
       </form>
       {error && <p className="form-error">{error}</p>}
-      {createdSecret && (
-        <p className="notice">
-          Confidential client secret (copy now): <code>{createdSecret}</code>
+      {notice && <p className="notice">{notice}</p>}
+      {createdClientId && (
+        <p className="notice notice--row">
+          <span>
+            Client id: <code>{createdClientId}</code>
+          </span>
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={() => copy(createdClientId, "Client id")}
+          >
+            Copy
+          </button>
         </p>
       )}
       <div className="apps-list">
@@ -84,10 +104,20 @@ export function AppsManager({ initialApps }: { initialApps: AppRow[] }) {
           <article key={app.id} className="app-row">
             <div>
               <h4>{app.name}</h4>
-              <p>
+              <p className="app-row__id">
                 <code>{app.clientId}</code>
+                <button
+                  type="button"
+                  className="btn-ghost btn-ghost--compact"
+                  onClick={() => copy(app.clientId, "Client id")}
+                >
+                  Copy
+                </button>
               </p>
               <p className="muted">{app.redirectUris.join(", ")}</p>
+              <p className="muted app-row__meta">
+                {app.public ? "Public PKCE client" : "Confidential client"}
+              </p>
             </div>
             <button
               type="button"

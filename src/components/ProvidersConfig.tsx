@@ -37,18 +37,15 @@ type GrokFlow = {
   interval: number;
 };
 
+const GLYPH: Record<ProviderId, string> = {
+  codex: "C",
+  antigravity: "A",
+  claude: "◆",
+  grok: "G",
+};
+
 function ProviderGlyph({ id }: { id: ProviderId }) {
-  const letter =
-    id === "antigravity"
-      ? "A"
-      : id === "codex"
-        ? "X"
-        : id === "claude"
-          ? "C"
-          : id === "grok"
-            ? "X"
-            : "▸";
-  return <span className="provider-btn__glyph">{letter}</span>;
+  return <span className="provider-btn__glyph">{GLYPH[id]}</span>;
 }
 
 function ProviderButton({
@@ -80,7 +77,9 @@ function ProviderButton({
       <span className="provider-btn__shine" aria-hidden />
       <ProviderGlyph id={provider.id} />
       <span className="provider-btn__copy">
-        <strong>{label || (connected ? provider.connectedLabel : provider.buttonLabel)}</strong>
+        <strong>
+          {label || (connected ? provider.connectedLabel : provider.buttonLabel)}
+        </strong>
         <em>{provider.short}</em>
       </span>
       <span className={`provider-btn__status ${connected ? "on" : "off"}`}>
@@ -102,7 +101,9 @@ export function ProvidersConfig({
   const [message, setMessage] = useState<string | null>(null);
   const [codexFlow, setCodexFlow] = useState<CodexFlow | null>(null);
   const [codexCode, setCodexCode] = useState("");
-  const [antigravityFlow, setAntigravityFlow] = useState<AntigravityFlow | null>(null);
+  const [antigravityFlow, setAntigravityFlow] = useState<AntigravityFlow | null>(
+    null,
+  );
   const [antigravityCode, setAntigravityCode] = useState("");
   const [claudeToken, setClaudeToken] = useState("");
   const [claudeAck, setClaudeAck] = useState(false);
@@ -196,6 +197,13 @@ export function ProvidersConfig({
 
   return (
     <div className="providers-config">
+      {(message || error) && (
+        <div className="providers-config__toast" role="status">
+          {message && <p className="notice">{message}</p>}
+          {error && <p className="form-error">{error}</p>}
+        </div>
+      )}
+
       <div className="providers-config__grid">
         {PROVIDERS.map((provider) => {
           const conn = byProvider.get(provider.id);
@@ -217,6 +225,16 @@ export function ProvidersConfig({
                   <p className="provider-tile__short">{provider.short}</p>
                   <h3>{provider.name}</h3>
                   <p>{provider.description}</p>
+                  {provider.docsUrl ? (
+                    <a
+                      className="text-link provider-tile__docs"
+                      href={provider.docsUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Provider docs
+                    </a>
+                  ) : null}
                 </div>
               </div>
 
@@ -270,9 +288,10 @@ export function ProvidersConfig({
                   ) : (
                     <>
                       <p className="muted">
-                        Uses the official Codex desktop OAuth client and
-                        loopback callback on{" "}
-                        <code>http://localhost:{codexFlow.port}/auth/callback</code>
+                        Official Codex desktop OAuth with loopback on{" "}
+                        <code>
+                          http://localhost:{codexFlow.port}/auth/callback
+                        </code>
                         .
                       </p>
                       <ol>
@@ -302,11 +321,10 @@ export function ProvidersConfig({
                           Copy bridge command
                         </button>
                         <a
-                          className="btn-secondary"
+                          className="btn-secondary btn-secondary--link"
                           href={codexFlow.authorizeUrl}
                           target="_blank"
                           rel="noreferrer"
-                          style={{ textAlign: "center" }}
                         >
                           Open authorize URL
                         </a>
@@ -361,7 +379,7 @@ export function ProvidersConfig({
                   ) : (
                     <>
                       <p className="muted">
-                        Google OAuth PKCE with loopback callback on{" "}
+                        Google OAuth PKCE with loopback on{" "}
                         <code>{antigravityFlow.redirectUri}</code>
                         {antigravityFlow.port
                           ? ` (port ${antigravityFlow.port})`
@@ -374,11 +392,10 @@ export function ProvidersConfig({
                         ))}
                       </ol>
                       <a
-                        className="btn-secondary"
+                        className="btn-secondary btn-secondary--link"
                         href={antigravityFlow.authorizeUrl}
                         target="_blank"
                         rel="noreferrer"
-                        style={{ textAlign: "center" }}
                       >
                         Open authorize URL
                       </a>
@@ -424,7 +441,9 @@ export function ProvidersConfig({
                       checked={claudeAck}
                       onChange={(e) => setClaudeAck(e.target.checked)}
                     />
-                    <span>I understand and accept the account deletion risk</span>
+                    <span>
+                      I understand and accept the account deletion risk
+                    </span>
                   </label>
                   <input
                     value={claudeToken}
@@ -495,9 +514,6 @@ export function ProvidersConfig({
           );
         })}
       </div>
-
-      {message && <p className="notice">{message}</p>}
-      {error && <p className="form-error">{error}</p>}
     </div>
   );
 }

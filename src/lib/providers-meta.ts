@@ -52,8 +52,8 @@ export const PROVIDERS = [
       "Authorize with xAI Grok Build via device-code OAuth. Tokens talk to cli-chat-proxy.grok.com (not api.x.ai).",
     method: "device_oauth",
     docsUrl: "https://docs.x.ai/build/overview",
-    accent: "#e8e8e8",
-    accentSoft: "rgba(232, 232, 232, 0.12)",
+    accent: "#e8c98a",
+    accentSoft: "rgba(232, 201, 138, 0.16)",
     risk: null as string | null,
   },
 ] as const;

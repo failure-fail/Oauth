@@ -8,22 +8,25 @@ export default function DevelopersPage() {
 
   return (
     <main className="page developers-layout">
-      <section>
+      <section className="developers-main">
         <p className="eyebrow">Developers</p>
         <h1 className="page-title">Integrate Failure AI OAuth</h1>
         <p className="muted">
           Failure is a PKCE OAuth 2.0 authorization server. Register an app in
           the dashboard, show the frosted glass Sign in with Failure button, and
           exchange the code for tokens that unlock linked providers. Full
-          integration guide:{" "}
-          <a href="https://github.com/failure-fail/Oauth/blob/cursor/universal-failure-ai-oauth-44ee/docs/INTEGRATION.md">
+          guide:{" "}
+          <a
+            className="text-link"
+            href="https://github.com/failure-fail/Oauth/blob/main/docs/INTEGRATION.md"
+          >
             docs/INTEGRATION.md
           </a>
           .
         </p>
 
-        <h2 style={{ marginTop: "2rem" }}>PKCE quickstart</h2>
-        <ol className="muted" style={{ lineHeight: 1.7 }}>
+        <h2 className="developers-h2">PKCE quickstart</h2>
+        <ol className="developers-steps">
           <li>Create a public client in the dashboard (PKCE required).</li>
           <li>
             Send users to <code>/oauth/authorize</code> with{" "}
@@ -39,21 +42,22 @@ export default function DevelopersPage() {
           </li>
         </ol>
 
-        <h2 style={{ marginTop: "2rem" }}>Discovery</h2>
-        <code className="code-block">{`${base}/.well-known/openid-configuration`}</code>
+        <h2 className="developers-h2">Discovery</h2>
+        <code className="code-block">
+          {`${base}/.well-known/openid-configuration`}
+        </code>
 
-        <h2 style={{ marginTop: "2rem" }}>Universal UI format</h2>
+        <h2 className="developers-h2">Universal UI format</h2>
         <code className="code-block">{JSON.stringify(ui, null, 2)}</code>
 
-        <h2 style={{ marginTop: "2rem" }}>Example authorize URL</h2>
+        <h2 className="developers-h2">Example authorize URL</h2>
         <code className="code-block">{`${base}/oauth/authorize?response_type=code&client_id=YOUR_CLIENT_ID&redirect_uri=https://yourapp.com/callback&scope=openid%20profile%20email%20providers%20offline_access&code_challenge=CHALLENGE&code_challenge_method=S256&state=STATE`}</code>
       </section>
 
-      <aside>
+      <aside className="developers-aside">
         <FailureButtonCard
           authorizeUrl={`${base}/oauth/authorize?client_id=YOUR_CLIENT_ID&redirect_uri=https://yourapp.com/callback&response_type=code&scope=openid%20profile%20email%20providers%20offline_access&code_challenge=pending&code_challenge_method=S256`}
         />
-        <div style={{ height: "1rem" }} />
         <div className="failure-button-card">
           <p className="failure-button-card__eyebrow">SDK assets</p>
           <h3 className="failure-button-card__title">Drop-in files</h3>

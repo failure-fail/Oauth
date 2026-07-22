@@ -4,9 +4,18 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/session";
 
-export default async function SignupPage() {
+export default async function SignupPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ next?: string }>;
+}) {
   const user = await getCurrentUser();
-  if (user) redirect("/dashboard");
+  const params = await searchParams;
+  if (user) redirect(params.next || "/dashboard");
+
+  const loginHref = params.next
+    ? `/login?next=${encodeURIComponent(params.next)}`
+    : "/login";
 
   return (
     <main className="auth-shell">
@@ -14,15 +23,15 @@ export default async function SignupPage() {
         <p className="eyebrow">Failure AI OAuth</p>
         <h1>Create your account</h1>
         <p className="muted">
-          Email + password first. Then connect Codex, Antigravity, Claude Code, Grok
-          Build.
+          Email + password first. Then connect Codex, Antigravity, Claude Code,
+          and Grok Build.
         </p>
         <Suspense fallback={<p className="muted">Loading…</p>}>
           <AuthForm mode="signup" />
         </Suspense>
-        <p className="muted" style={{ marginTop: "1rem" }}>
+        <p className="auth-footer muted">
           Already have an account?{" "}
-          <Link className="text-link" href="/login">
+          <Link className="text-link" href={loginHref}>
             Sign in
           </Link>
         </p>

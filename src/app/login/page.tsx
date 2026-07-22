@@ -13,6 +13,10 @@ export default async function LoginPage({
   const params = await searchParams;
   if (user) redirect(params.next || "/dashboard");
 
+  const signupHref = params.next
+    ? `/signup?next=${encodeURIComponent(params.next)}`
+    : "/signup";
+
   return (
     <main className="auth-shell">
       <div className="auth-card">
@@ -22,9 +26,9 @@ export default async function LoginPage({
         <Suspense fallback={<p className="muted">Loading…</p>}>
           <AuthForm mode="login" />
         </Suspense>
-        <p className="muted" style={{ marginTop: "1rem" }}>
+        <p className="auth-footer muted">
           New here?{" "}
-          <Link className="text-link" href="/signup">
+          <Link className="text-link" href={signupHref}>
             Create an account
           </Link>
         </p>

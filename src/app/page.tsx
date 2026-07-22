@@ -1,5 +1,14 @@
 import Link from "next/link";
+import type { CSSProperties } from "react";
 import { SignInWithFailure } from "@/components/SignInWithFailure";
+import { PROVIDERS } from "@/lib/providers-meta";
+
+const GLYPH: Record<string, string> = {
+  codex: "C",
+  antigravity: "A",
+  claude: "◆",
+  grok: "G",
+};
 
 export default function HomePage() {
   return (
@@ -10,8 +19,8 @@ export default function HomePage() {
         <p className="brand-hero">Failure</p>
         <h1 className="hero-title">One OAuth for every AI app.</h1>
         <p className="hero-lede">
-          Users connect Codex, Antigravity, Claude Code, and Grok Build once. Your
-          app gets PKCE tokens, live models, thinking levels, and provider
+          Users connect Codex, Antigravity, Claude Code, and Grok Build once.
+          Your app gets PKCE tokens, live models, thinking levels, and provider
           credentials.
         </p>
         <div className="hero-cta">
@@ -31,27 +40,27 @@ export default function HomePage() {
           credential packages.
         </p>
         <div className="rail">
-          <article>
-            <h3>Codex + Antigravity</h3>
-            <p>
-              Desktop OAuth and Google Antigravity OAuth. Live models, thinking
-              levels, think blocks — plus GPT Image 2 on Codex.
-            </p>
-          </article>
-          <article>
-            <h3>Claude Code</h3>
-            <p>
-              Setup-token path with an explicit account-deletion risk warning
-              before connect.
-            </p>
-          </article>
-          <article>
-            <h3>Grok Build</h3>
-            <p>
-              Device-code OAuth into the Grok CLI proxy — the same session
-              SuperGrok uses.
-            </p>
-          </article>
+          {PROVIDERS.map((provider) => (
+            <article
+              key={provider.id}
+              className="rail-provider"
+              style={
+                {
+                  "--provider-accent": provider.accent,
+                  "--provider-accent-soft": provider.accentSoft,
+                } as CSSProperties
+              }
+            >
+              <span className="rail-provider__glyph" aria-hidden>
+                {GLYPH[provider.id] || "▸"}
+              </span>
+              <div>
+                <p className="rail-provider__short">{provider.short}</p>
+                <h3>{provider.name}</h3>
+                <p>{provider.description}</p>
+              </div>
+            </article>
+          ))}
         </div>
       </section>
     </main>
