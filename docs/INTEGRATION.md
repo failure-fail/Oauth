@@ -213,6 +213,8 @@ Each connected provider includes a `credentials` object (tokens refreshed by Fai
         "refreshToken": "…",
         "expiresAt": 0,
         "accountId": "…",
+        "models": [{ "id": "…", "name": "…", "kind": "chat" }],
+        "modelsSource": "live",
         "capabilities": { "…": "…" },
         "endpoints": { "…": "…" },
         "requiredHeaders": { "…": "…" }
@@ -256,6 +258,8 @@ Accept: application/json
 
 Google Antigravity / Cloud Code Assist via OAuth PKCE (same public client as Antigravity IDE). Docs: https://github.com/NoeFabris/opencode-antigravity-auth
 
+`credentials.models` is the **live account catalog** (same source as Failure chat via `fetchAvailableModels`). Prefer those ids over hardcoding. Also includes `projectId`, `modelsSource` (`live` | `fallback`), and optional `modelsWarning`.
+
 **Required headers**
 
 ```http
@@ -270,6 +274,7 @@ Client-Metadata: {"ideType":"ANTIGRAVITY","platform":"MACOS","pluginType":"GEMIN
 
 ```js
 const cred = providers.find((p) => p.provider === "antigravity").credentials;
+const model = cred.models?.[0]?.id || "gemini-3-pro-high";
 
 await fetch(cred.endpoints.streamGenerateContent, {
   method: "POST",
@@ -283,7 +288,7 @@ await fetch(cred.endpoints.streamGenerateContent, {
   },
   body: JSON.stringify({
     project: cred.projectId,
-    model: "gemini-3-pro-high",
+    model,
     userAgent: "antigravity",
     requestType: "agent",
     request: {

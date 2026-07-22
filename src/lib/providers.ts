@@ -9,7 +9,8 @@ import {
 } from "./config";
 import { encryptSecret, decryptSecret, pkceChallengeFromVerifier } from "./crypto";
 import { db, type ProviderConnection } from "./db";
-import { antigravityCredentialEndpoints } from "./antigravity-client";
+import { antigravityCredentialEndpoints, listAntigravityModels } from "./antigravity-client";
+import { listCodexModels } from "./codex-client";
 
 export type StoredProviderSecret = {
   type: string;
@@ -294,7 +295,7 @@ export async function ensureFreshConnection(
 }
 
 /** Usable credential package apps receive under the `providers` scope. */
-export function exposeProviderCredentials(
+export async function exposeProviderCredentials(
   provider: ProviderId,
   secret: StoredProviderSecret,
 ) {
@@ -302,6 +303,20 @@ export function exposeProviderCredentials(
     case "codex": {
       const relay = process.env.FAILURE_CODEX_BASE_URL?.trim().replace(/\/$/, "");
       const base = relay || CODEX_OAUTH.baseUrl;
+      let models: Awaited<ReturnType<typeof listCodexModels>>["models"] = [];
+      let modelsSource: "live" | "error" | undefined;
+      let modelsWarning: string | undefined;
+      try {
+        const listed = await listCodexModels(secret, "codex");
+        models = listed.models;
+        modelsSource = listed.source;
+        modelsWarning = listed.warning;
+      } catch (error) {
+        modelsWarning =
+          error instanceof Error
+            ? error.message
+            : "Failed to load Codex models for userinfo";
+      }
       return {
         type: secret.type,
         protocol: "codex_backend",
@@ -311,6 +326,9 @@ export function exposeProviderCredentials(
         expiresAt: secret.expiresAt ?? null,
         accountId: secret.accountId ?? null,
         isFedRamp: secret.isFedRamp ?? null,
+        models,
+        modelsSource: modelsSource ?? null,
+        modelsWarning: modelsWarning ?? null,
         capabilities: {
           chat: true,
           imageGeneration: true,
@@ -361,15 +379,40 @@ export function exposeProviderCredentials(
     }
     case "antigravity": {
       const endpoints = antigravityCredentialEndpoints();
+      let models: Awaited<ReturnType<typeof listAntigravityModels>>["models"] =
+        [];
+      let modelsSource: "live" | "fallback" | "error" | undefined;
+      let modelsWarning: string | undefined;
+      let projectId =
+        secret.projectId ||
+        (typeof secret.raw?.projectId === "string"
+          ? secret.raw.projectId
+          : null);
+      try {
+        const listed = await listAntigravityModels(secret);
+        models = listed.models;
+        modelsSource = listed.source;
+        modelsWarning = listed.warning;
+        projectId = listed.projectId || projectId;
+      } catch (error) {
+        modelsSource = "error";
+        modelsWarning =
+          error instanceof Error
+            ? error.message
+            : "Failed to load Antigravity models for userinfo";
+      }
       return {
         type: secret.type,
         protocol: "antigravity_cloudcode",
         accessToken: secret.accessToken ?? null,
         refreshToken: secret.refreshToken ?? null,
         expiresAt: secret.expiresAt ?? null,
-        projectId: secret.projectId ?? null,
+        projectId: projectId ?? null,
         email:
           typeof secret.raw?.email === "string" ? secret.raw.email : null,
+        models,
+        modelsSource: modelsSource ?? null,
+        modelsWarning: modelsWarning ?? null,
         capabilities: {
           chat: true,
           reasoning: true,
@@ -402,6 +445,17 @@ export function exposeProviderCredentials(
           "Client-Metadata":
             '{"ideType":"ANTIGRAVITY","platform":"MACOS","pluginType":"GEMINI"}',
         },
+        requestShape: {
+          project: "<projectId>",
+          model: "<modelId from models[]>",
+          userAgent: "antigravity",
+          requestType: "agent",
+          request: {
+            contents: [{ role: "user", parts: [{ text: "..." }] }],
+            systemInstruction: { parts: [{ text: "..." }] },
+            generationConfig: { maxOutputTokens: 4096 },
+          },
+        },
         oauth: {
           clientId: ANTIGRAVITY_OAUTH.clientId,
           redirectUri: ANTIGRAVITY_OAUTH.redirectUri,
@@ -409,7 +463,7 @@ export function exposeProviderCredentials(
         },
         docs: ANTIGRAVITY_OAUTH.docsUrl,
         note:
-          "Google Antigravity / Cloud Code Assist. Requests use Gemini-style contents wrapped in { project, model, request }. See docs/INTEGRATION.md.",
+          "Google Antigravity / Cloud Code Assist. `models` is the live account catalog (same as Failure chat). Requests use Gemini-style contents wrapped in { project, model, request }.",
       };
     }
     case "claude":

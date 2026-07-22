@@ -41,7 +41,7 @@ export async function GET(req: Request) {
         const { secret } = await ensureFreshConnection(conn);
         providers.push({
           ...base,
-          credentials: exposeProviderCredentials(
+          credentials: await exposeProviderCredentials(
             conn.provider as ProviderId,
             secret,
           ),
