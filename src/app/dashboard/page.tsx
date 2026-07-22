@@ -29,21 +29,23 @@ export default async function DashboardPage() {
     <main className="page dashboard-grid">
       <AccountNav active="overview" />
 
-      <section>
+      <section className="providers-hero">
         <p className="eyebrow">Dashboard</p>
-        <h1 className="page-title">Hey, {user.name}</h1>
+        <h1 className="page-title">{user.name}</h1>
         <p className="muted">
-          Manage your Failure account, linked providers, and OAuth apps.
+          Linked providers, live chat/image tests, and the apps that consume
+          Failure OAuth.
         </p>
       </section>
 
       <section className="dash-provider-summary">
         <div className="dash-provider-summary__copy">
-          <h2>Providers</h2>
+          <h2>
+            {connections.length}/{PROVIDERS.length} providers linked
+          </h2>
           <p className="muted">
-            {connections.length}/{PROVIDERS.length} connected. Configure Codex,
-            ChatGPT, Claude Code, and Grok Build from your account
-            providers page — then try them in Chat.
+            Connect once. Test thinking levels and GPT Image 2 in Chat. Apps
+            receive credential packages via userinfo.
           </p>
         </div>
         <div className="dash-provider-summary__pills">
@@ -62,25 +64,25 @@ export default async function DashboardPage() {
         </div>
         <div className="hero-cta">
           <Link className="btn-primary" href="/dashboard/chat">
-            Open chat test
+            Open live chat
           </Link>
           <Link className="btn-secondary" href="/account/providers">
-            Providers config
+            Configure providers
           </Link>
         </div>
       </section>
 
       <section id="apps">
-        <h2>Your apps</h2>
+        <h2 className="section-title">Apps</h2>
         <p className="muted">
-          Register a public PKCE client, then drop the Failure button into your
-          product.
+          Register a public PKCE client, then drop Sign in with Failure into
+          your product.
         </p>
         <AppsManager initialApps={apps} />
       </section>
 
       <section>
-        <h2>Button for other apps</h2>
+        <h2 className="section-title">Button kit</h2>
         <FailureButtonCard />
       </section>
     </main>

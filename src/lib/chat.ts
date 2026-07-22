@@ -1,40 +1,21 @@
 import {
   CLAUDE_OAUTH,
-  CODEX_OAUTH,
   GROK_OAUTH,
   type ProviderId,
 } from "./config";
 import {
-  chatgptAccountIdFromToken,
+  chatCodex,
+  listCodexModels,
+  type ProviderModel,
+  type ThinkingLevel,
+} from "./codex-client";
+import {
   ensureFreshConnection,
   type StoredProviderSecret,
 } from "./providers";
 import type { ProviderConnection } from "./db";
 
-export type ProviderModel = {
-  id: string;
-  name?: string;
-};
-
-function codexHeaders(secret: StoredProviderSecret): Record<string, string> {
-  const token = secret.accessToken;
-  if (!token) throw new Error("Access token missing");
-  const accountId =
-    secret.accountId || chatgptAccountIdFromToken(token) || null;
-  if (!accountId) {
-    throw new Error(
-      "Missing ChatGPT-Account-Id on token — reconnect Codex/ChatGPT",
-    );
-  }
-  return {
-    Authorization: `Bearer ${token}`,
-    Accept: "application/json",
-    "OpenAI-Beta": "responses=experimental",
-    originator: CODEX_OAUTH.originator,
-    "ChatGPT-Account-Id": accountId,
-    "User-Agent": "codex_cli_rs/0.0.0",
-  };
-}
+export type { ProviderModel };
 
 function claudeHeaders(token: string): Record<string, string> {
   return {
@@ -63,14 +44,11 @@ function grokHeaders(token: string): Record<string, string> {
 function pickModelIds(payload: unknown): ProviderModel[] {
   if (!payload || typeof payload !== "object") return [];
   const root = payload as Record<string, unknown>;
-
   const buckets: unknown[] = [];
   if (Array.isArray(root.data)) buckets.push(...root.data);
   if (Array.isArray(root.models)) buckets.push(...root.models);
   if (Array.isArray(root.items)) buckets.push(...root.items);
   if (Array.isArray(payload)) buckets.push(...payload);
-
-  // models-v2 sometimes nests under groups/categories
   for (const key of ["groups", "categories", "available_models"]) {
     const group = root[key];
     if (Array.isArray(group)) {
@@ -85,14 +63,13 @@ function pickModelIds(payload: unknown): ProviderModel[] {
       }
     }
   }
-
   const seen = new Set<string>();
   const models: ProviderModel[] = [];
   for (const item of buckets) {
     if (typeof item === "string") {
       if (seen.has(item)) continue;
       seen.add(item);
-      models.push({ id: item, name: item });
+      models.push({ id: item, name: item, kind: "chat" });
       continue;
     }
     if (!item || typeof item !== "object") continue;
@@ -110,15 +87,13 @@ function pickModelIds(payload: unknown): ProviderModel[] {
       (typeof row.name === "string" && row.name) ||
       (typeof row.title === "string" && row.title) ||
       id;
-    models.push({ id, name });
+    models.push({ id, name, kind: "chat" });
   }
   return models;
 }
 
 function preferModel(models: ProviderModel[], hints: string[]): string {
-  if (!models.length) {
-    throw new Error("Provider returned no models");
-  }
+  if (!models.length) throw new Error("Provider returned no models");
   for (const hint of hints) {
     const exact = models.find((m) => m.id === hint);
     if (exact) return exact.id;
@@ -128,19 +103,6 @@ function preferModel(models: ProviderModel[], hints: string[]): string {
     if (partial) return partial.id;
   }
   return models[0].id;
-}
-
-async function listCodexModels(secret: StoredProviderSecret): Promise<ProviderModel[]> {
-  const res = await fetch(CODEX_OAUTH.modelsUrl, {
-    headers: codexHeaders(secret),
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(
-      `Failed to fetch Codex/ChatGPT models: ${res.status} ${text.slice(0, 300)}`,
-    );
-  }
-  return pickModelIds(await res.json());
 }
 
 async function listClaudeModels(secret: StoredProviderSecret): Promise<ProviderModel[]> {
@@ -172,16 +134,28 @@ async function listGrokModels(secret: StoredProviderSecret): Promise<ProviderMod
 export async function listProviderModels(input: {
   provider: ProviderId;
   connection: ProviderConnection;
-}): Promise<ProviderModel[]> {
+}): Promise<{
+  models: ProviderModel[];
+  warning?: string;
+  transport?: string;
+  source?: string;
+}> {
   const { secret } = await ensureFreshConnection(input.connection);
   switch (input.provider) {
     case "codex":
-    case "chatgpt":
-      return listCodexModels(secret);
+    case "chatgpt": {
+      const result = await listCodexModels(secret);
+      return {
+        models: result.models,
+        warning: result.warning,
+        transport: result.transport,
+        source: result.source,
+      };
+    }
     case "claude":
-      return listClaudeModels(secret);
+      return { models: await listClaudeModels(secret) };
     case "grok":
-      return listGrokModels(secret);
+      return { models: await listGrokModels(secret) };
     default:
       throw new Error("Unsupported provider");
   }
@@ -217,67 +191,11 @@ async function readSseText(res: Response): Promise<string> {
         | undefined;
       if (choices?.[0]?.delta?.content) chunks.push(choices[0].delta.content);
       if (choices?.[0]?.message?.content) chunks.push(choices[0].message.content);
-      if (typeof json.delta === "object" && json.delta) {
-        const delta = json.delta as { text?: string; content?: string };
-        if (delta.text) chunks.push(delta.text);
-        if (delta.content) chunks.push(delta.content);
-      }
     } catch {
       // ignore
     }
   }
   return chunks.join("") || raw.slice(0, 2000);
-}
-
-async function chatCodexLike(
-  secret: StoredProviderSecret,
-  prompt: string,
-  label: string,
-  model?: string,
-) {
-  const models = await listCodexModels(secret);
-  const selected =
-    model && models.some((m) => m.id === model)
-      ? model
-      : preferModel(models, [
-          "gpt-5.6-sol",
-          "gpt-5.5",
-          "gpt-5.4",
-          "gpt-5.3-codex",
-          "gpt-5.2-codex",
-          "codex",
-          "gpt-5",
-        ]);
-
-  const headers = {
-    ...codexHeaders(secret),
-    "Content-Type": "application/json",
-    Accept: "text/event-stream",
-  };
-
-  const res = await fetch(CODEX_OAUTH.responsesUrl, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({
-      model: selected,
-      instructions: "You are a helpful assistant used to test Failure AI OAuth.",
-      input: prompt,
-      store: false,
-      stream: true,
-    }),
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(
-      `${label} chat failed (${selected}): ${res.status} ${text.slice(0, 400)}`,
-    );
-  }
-  return {
-    text: await readSseText(res),
-    model: selected,
-    models,
-    providerLabel: label,
-  };
 }
 
 async function chatClaude(
@@ -386,13 +304,23 @@ export async function runProviderChat(input: {
   connection: ProviderConnection;
   prompt: string;
   model?: string;
+  thinkingLevel?: ThinkingLevel;
+  includeThinking?: boolean;
 }) {
   const { secret } = await ensureFreshConnection(input.connection);
   switch (input.provider) {
     case "codex":
-      return chatCodexLike(secret, input.prompt, "Codex", input.model);
+      return chatCodex(secret, input.prompt, "Codex", {
+        model: input.model,
+        thinkingLevel: input.thinkingLevel,
+        includeThinking: input.includeThinking,
+      });
     case "chatgpt":
-      return chatCodexLike(secret, input.prompt, "ChatGPT", input.model);
+      return chatCodex(secret, input.prompt, "ChatGPT", {
+        model: input.model,
+        thinkingLevel: input.thinkingLevel,
+        includeThinking: input.includeThinking,
+      });
     case "claude":
       return chatClaude(secret, input.prompt, input.model);
     case "grok":

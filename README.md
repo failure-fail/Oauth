@@ -79,7 +79,20 @@ curl -X POST https://YOUR_HOST/api/oauth/token \
   -d 'code_verifier=PKCE_VERIFIER'
 ```
 
-UserInfo (with `providers` scope) returns linked Codex / ChatGPT / Claude / Grok credential packages for the signed-in user. Each package includes refreshed tokens plus the live endpoints and required headers for that provider (Codex/ChatGPT → `chatgpt.com/backend-api/codex`, Claude → Anthropic OAuth headers, Grok → `cli-chat-proxy.grok.com`).
+UserInfo (with `providers` scope) returns linked Codex / ChatGPT / Claude / Grok credential packages for the signed-in user. Each package includes refreshed tokens plus the live endpoints and required headers for that provider (Codex/ChatGPT → `chatgpt.com/backend-api/codex` or a `FAILURE_CODEX_BASE_URL` relay, Claude → Anthropic OAuth headers, Grok → `cli-chat-proxy.grok.com`).
+
+Codex/ChatGPT packages also advertise:
+- GPT Image 2 generate/edit endpoints
+- Thinking levels (`reasoning.effort`) and think-block response shape (`reasoning` items + `reasoning.encrypted_content`)
+
+### Cloudflare Workers note
+
+`chatgpt.com` blocks Cloudflare Worker egress. For production chat/models/images from Workers, run the included relay and set `FAILURE_CODEX_BASE_URL`:
+
+```bash
+pnpm relay:codex
+# then expose that host and set FAILURE_CODEX_BASE_URL to it
+```
 
 ## Universal UI format
 

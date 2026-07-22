@@ -41,8 +41,12 @@ export const CODEX_OAUTH = {
   // Official Codex login scope — extra scopes break token usability for models
   scope: "openid profile email offline_access",
   originator: "codex_cli_rs",
-  modelsUrl: "https://chatgpt.com/backend-api/codex/models?client_version=1.0.0",
+  modelsUrl: "https://chatgpt.com/backend-api/codex/models",
   responsesUrl: "https://chatgpt.com/backend-api/codex/responses",
+  imageGenerationsUrl:
+    "https://chatgpt.com/backend-api/codex/images/generations",
+  imageEditsUrl: "https://chatgpt.com/backend-api/codex/images/edits",
+  imageModel: "gpt-image-2",
 };
 
 export const GROK_OAUTH = {

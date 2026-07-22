@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@openai-oauth/core':
+        specifier: ^2.0.0
+        version: 2.0.0
       '@openai-oauth/react':
         specifier: ^2.0.0
         version: 2.0.0(react@19.2.4)

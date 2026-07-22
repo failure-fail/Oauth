@@ -214,7 +214,10 @@ export function exposeProviderCredentials(
 ) {
   switch (provider) {
     case "codex":
-    case "chatgpt":
+    case "chatgpt": {
+      // Lazy import avoided — keep endpoints helper local to prevent cycles
+      const relay = process.env.FAILURE_CODEX_BASE_URL?.trim().replace(/\/$/, "");
+      const base = relay || "https://chatgpt.com/backend-api/codex";
       return {
         type: secret.type,
         protocol: "codex_backend",
@@ -222,22 +225,53 @@ export function exposeProviderCredentials(
         refreshToken: secret.refreshToken ?? null,
         expiresAt: secret.expiresAt ?? null,
         accountId: secret.accountId ?? null,
+        capabilities: {
+          chat: true,
+          imageGeneration: true,
+          imageEditing: true,
+          imageModel: "gpt-image-2",
+          reasoning: true,
+          thinkingLevels: ["none", "minimal", "low", "medium", "high", "xhigh"],
+          defaultThinkingLevel: "medium",
+          thinkBlocks: {
+            include: ["reasoning.encrypted_content"],
+            summary: ["auto", "concise", "detailed"],
+            outputItemType: "reasoning",
+            requestShape: {
+              reasoning: { effort: "<thinkingLevel>", summary: "detailed" },
+              include: ["reasoning.encrypted_content"],
+              store: false,
+              stream: true,
+            },
+            responseShape: {
+              type: "reasoning",
+              summary: [{ type: "summary_text", text: "..." }],
+              encrypted_content: "<opaque>",
+            },
+          },
+        },
         endpoints: {
-          models: CODEX_OAUTH.modelsUrl,
-          responses: CODEX_OAUTH.responsesUrl,
+          models: `${base}/models`,
+          responses: `${base}/responses`,
+          imageGenerations: `${base}/images/generations`,
+          imageEdits: `${base}/images/edits`,
           token: CODEX_OAUTH.tokenUrl,
+          openaiApiFallback: "https://api.openai.com/v1",
         },
         requiredHeaders: {
           Authorization: "Bearer <accessToken>",
-          "ChatGPT-Account-Id": "<accountId>",
-          "OpenAI-Beta": "responses=experimental",
+          "chatgpt-account-id": "<accountId>",
           originator: CODEX_OAUTH.originator,
         },
         oauth: {
           clientId: CODEX_OAUTH.clientId,
           scope: CODEX_OAUTH.scope,
         },
+        note: relay
+          ? "FAILURE_CODEX_BASE_URL relay is configured for Cloudflare Worker egress."
+          : "Direct chatgpt.com calls are blocked from Cloudflare Workers; apps should call from non-Worker hosts or a relay.",
       };
+    }
     case "claude":
       return {
         type: secret.type,

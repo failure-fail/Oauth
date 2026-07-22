@@ -24,13 +24,16 @@ export async function GET(req: Request) {
         { status: 400 },
       );
     }
-    const models = await listProviderModels({
+    const result = await listProviderModels({
       provider: body.provider,
       connection: conn,
     });
     return NextResponse.json({
       provider: body.provider,
-      models,
+      models: result.models,
+      warning: result.warning,
+      transport: result.transport,
+      source: result.source,
       fetchedAt: new Date().toISOString(),
     });
   } catch (error) {

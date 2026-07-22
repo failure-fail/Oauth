@@ -9,6 +9,10 @@ const chatSchema = z.object({
   provider: z.enum(["codex", "chatgpt", "claude", "grok"]),
   prompt: z.string().min(1).max(4000),
   model: z.string().min(1).optional(),
+  thinkingLevel: z
+    .enum(["none", "minimal", "low", "medium", "high", "xhigh", "max"])
+    .optional(),
+  includeThinking: z.boolean().optional(),
 });
 
 export async function POST(req: Request) {
@@ -30,13 +34,18 @@ export async function POST(req: Request) {
       connection: conn,
       prompt: body.prompt,
       model: body.model,
+      thinkingLevel: body.thinkingLevel,
+      includeThinking: body.includeThinking,
     });
     return NextResponse.json({
       provider: body.provider,
       model: result.model,
       models: result.models,
       text: result.text,
+      thinking: "thinking" in result ? result.thinking : undefined,
       providerLabel: result.providerLabel,
+      transport: "transport" in result ? result.transport : undefined,
+      warning: "warning" in result ? result.warning : undefined,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Chat failed";

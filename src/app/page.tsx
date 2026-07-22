@@ -4,57 +4,52 @@ import { SignInWithFailure } from "@/components/SignInWithFailure";
 export default function HomePage() {
   return (
     <main>
-      <section className="hero">
+      <section className="hero hero--bleed">
+        <div className="hero__atmosphere" aria-hidden />
+        <div className="hero__grain" aria-hidden />
         <p className="brand-hero">Failure</p>
-        <h2>Universal AI OAuth for any app</h2>
-        <p>
-          PKCE sign-in that lets users bring Codex, ChatGPT, Claude Code, Grok
-          Build — then hand your app one clean Failure session.
+        <h1 className="hero-title">One OAuth for every AI app.</h1>
+        <p className="hero-lede">
+          Users connect Codex, ChatGPT, Claude Code, and Grok Build once. Your
+          app gets PKCE tokens, live models, thinking levels, and GPT Image 2.
         </p>
         <div className="hero-cta">
           <SignInWithFailure href="/signup" />
-          <Link className="btn-secondary" href="/developers">
-            Integrate Failure
+          <Link className="btn-ghost-light" href="/developers">
+            Read the integrate guide
           </Link>
         </div>
       </section>
 
-      <section className="section">
-        <h2>One identity. Four providers.</h2>
-        <p>
-          Users create a Failure account, connect their AI tools once, and every
-          integrated app uses the same Sign in with Failure button.
+      <section className="section section--tight">
+        <p className="eyebrow">What ships</p>
+        <h2 className="section-title">Identity in, providers out.</h2>
+        <p className="section-copy">
+          Failure is the authorization server. Apps never re-implement four
+          OAuth dances — they ask for `providers` scope and receive usable
+          credential packages.
         </p>
-        <div className="feature-strip">
+        <div className="rail">
           <article>
-            <h3>Codex desktop OAuth</h3>
-            <p>Official OpenAI Codex PKCE desktop flow with localhost callback.</p>
-          </article>
-          <article>
-            <h3>ChatGPT via openai-oauth</h3>
+            <h3>Codex + ChatGPT</h3>
             <p>
-              Bring ChatGPT credentials using{" "}
-              <a
-                className="text-link"
-                href="https://github.com/EvanZhouDev/openai-oauth"
-                target="_blank"
-                rel="noreferrer"
-              >
-                EvanZhouDev/openai-oauth
-              </a>
-              .
+              Desktop OAuth and Sign in with ChatGPT. Responses, thinking
+              effort, think blocks, GPT Image 2 generate/edit.
             </p>
           </article>
           <article>
             <h3>Claude Code</h3>
             <p>
-              Setup-token connect path with an explicit account-deletion risk
-              warning.
+              Setup-token path with an explicit account-deletion risk warning
+              before connect.
             </p>
           </article>
           <article>
-            <h3>Grok Build OAuth</h3>
-            <p>xAI device-code OAuth for Grok Build / SuperGrok sessions.</p>
+            <h3>Grok Build</h3>
+            <p>
+              Device-code OAuth into the Grok CLI proxy — the same session
+              SuperGrok uses.
+            </p>
           </article>
         </div>
       </section>

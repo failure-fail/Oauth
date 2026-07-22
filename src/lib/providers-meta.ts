@@ -20,7 +20,7 @@ export const PROVIDERS = [
     buttonLabel: "Sign in with ChatGPT",
     connectedLabel: "Connected to ChatGPT",
     description:
-      "One-click ChatGPT connect via openai-oauth. Requires the Sign in with ChatGPT browser extension.",
+      "One-click ChatGPT connect via openai-oauth. Chat + GPT Image 2 generate/edit on your ChatGPT plan.",
     method: "openai_oauth",
     docsUrl: "https://github.com/EvanZhouDev/openai-oauth",
     accent: "#19c37d",
