@@ -14,7 +14,12 @@ export default function DevelopersPage() {
         <p className="muted">
           Failure is a PKCE OAuth 2.0 authorization server. Register an app in
           the dashboard, show the frosted glass Sign in with Failure button, and
-          exchange the code for tokens that unlock linked providers.
+          exchange the code for tokens that unlock linked providers. Full
+          integration guide:{" "}
+          <a href="https://github.com/failure-fail/Oauth/blob/main/docs/INTEGRATION.md">
+            docs/INTEGRATION.md
+          </a>
+          .
         </p>
 
         <h2 style={{ marginTop: "2rem" }}>PKCE quickstart</h2>

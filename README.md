@@ -36,6 +36,10 @@ Requires Wrangler auth (`CLOUDFLARE_API_TOKEN`). Data is stored in Cloudflare KV
 
 ## Integrate as an app
 
+Full guide: **[docs/INTEGRATION.md](./docs/INTEGRATION.md)** (PKCE, userinfo credential packages, Codex/ChatGPT/Claude/Grok call shapes, think blocks, GPT Image 2).
+
+Quick path:
+
 1. Create a Failure account and open **Dashboard → Your apps**.
 2. Register a public PKCE client + redirect URI.
 3. Drop in the universal button:
