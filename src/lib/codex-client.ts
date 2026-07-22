@@ -188,11 +188,17 @@ export function codexAuthHeaders(
   };
 }
 
-/** Dedupe + normalize kinds/names from the live catalog only (no injected fakes). */
+const IMAGE_MODEL: ProviderModel = {
+  id: CODEX_IMAGE_MODEL,
+  name: "GPT Image 2",
+  kind: "image",
+};
+
+/** Dedupe live catalog and always expose GPT Image 2 for Codex/ChatGPT. */
 function normalizeLiveModels(models: ProviderModel[]): ProviderModel[] {
   const seen = new Set<string>();
   const out: ProviderModel[] = [];
-  for (const model of models) {
+  for (const model of [...models, IMAGE_MODEL]) {
     if (seen.has(model.id)) continue;
     seen.add(model.id);
     const isImage =
@@ -509,31 +515,46 @@ function pushThinkBlock(
   }
 }
 
-function extractFromResponseObject(
-  response: Record<string, unknown>,
-  chunks: string[],
-  summaryChunks: string[],
-  thinkBlocks: ThinkBlock[],
-) {
-  if (typeof response.output_text === "string" && response.output_text) {
-    chunks.push(response.output_text);
+function extractTextFromResponseObject(response: Record<string, unknown>): string {
+  if (typeof response.output_text === "string" && response.output_text.trim()) {
+    return response.output_text;
   }
+  const parts: string[] = [];
   for (const item of (response.output as Array<Record<string, unknown>>) || []) {
-    if (item?.type === "reasoning") {
-      pushThinkBlock(thinkBlocks, item, "reasoning");
-      const summary = summaryTextFromReasoningItem(item);
-      if (summary) summaryChunks.push(summary);
-      const content = reasoningContentFromItem(item);
-      if (content) summaryChunks.push(content);
-    }
-    if (item?.type === "message" && Array.isArray(item.content)) {
-      for (const c of item.content as Array<{ text?: string; type?: string }>) {
-        if (c.type === "output_text" || c.text) {
-          if (c.text) chunks.push(c.text);
-        }
+    if (item?.type !== "message" || !Array.isArray(item.content)) continue;
+    for (const c of item.content as Array<{ text?: string; type?: string }>) {
+      if ((c.type === "output_text" || !c.type || c.text) && c.text) {
+        parts.push(c.text);
       }
     }
   }
+  return parts.join("");
+}
+
+function extractThinkingFromResponseObject(
+  response: Record<string, unknown>,
+  thinkBlocks: ThinkBlock[],
+) {
+  for (const item of (response.output as Array<Record<string, unknown>>) || []) {
+    if (item?.type === "reasoning") {
+      pushThinkBlock(thinkBlocks, item, "reasoning");
+    }
+  }
+}
+
+function uniqueJoin(parts: string[]): string {
+  const joined = parts.join("");
+  if (!joined) return "";
+  // Collapse exact consecutive duplicates (stream deltas + completed payload).
+  const half = Math.floor(joined.length / 2);
+  if (
+    joined.length % 2 === 0 &&
+    half > 0 &&
+    joined.slice(0, half) === joined.slice(half)
+  ) {
+    return joined.slice(0, half);
+  }
+  return joined;
 }
 
 function parseCodexChatPayload(raw: string): {
@@ -541,31 +562,39 @@ function parseCodexChatPayload(raw: string): {
   thinkingSummary: string;
   thinkBlocks: ThinkBlock[];
 } {
-  const chunks: string[] = [];
-  const summaryChunks: string[] = [];
-  const thinkBlocks: ThinkBlock[] = [];
+  const deltaText: string[] = [];
+  const finalText: string[] = [];
+  const summaryDeltas: string[] = [];
+  const summaryFinal: string[] = [];
+  const thinkBlocksArr: ThinkBlock[] = [];
   const reasoningTextChunks: string[] = [];
 
   if (!raw.includes("data:")) {
     try {
       const json = JSON.parse(raw) as Record<string, unknown>;
-      extractFromResponseObject(json, chunks, summaryChunks, thinkBlocks);
+      const fromRoot = extractTextFromResponseObject(json);
+      if (fromRoot) finalText.push(fromRoot);
+      extractThinkingFromResponseObject(json, thinkBlocksArr);
       if (json.response && typeof json.response === "object") {
-        extractFromResponseObject(
-          json.response as Record<string, unknown>,
-          chunks,
-          summaryChunks,
-          thinkBlocks,
-        );
+        const nested = json.response as Record<string, unknown>;
+        const fromNested = extractTextFromResponseObject(nested);
+        if (fromNested && fromNested !== fromRoot) finalText.push(fromNested);
+        extractThinkingFromResponseObject(nested, thinkBlocksArr);
       }
-      if (typeof json.text === "string") chunks.push(json.text);
+      if (typeof json.text === "string" && !finalText.length) {
+        finalText.push(json.text);
+      }
     } catch {
       // fall through to raw slice
     }
+    const blockSummary = thinkBlocksArr
+      .map((b) => b.summary || b.content || "")
+      .filter(Boolean)
+      .join("\n\n");
     return {
-      text: chunks.join("") || raw.slice(0, 2000),
-      thinkingSummary: [...summaryChunks, ...reasoningTextChunks].join(""),
-      thinkBlocks,
+      text: uniqueJoin(finalText) || raw.slice(0, 2000),
+      thinkingSummary: blockSummary || reasoningTextChunks.join(""),
+      thinkBlocks: thinkBlocksArr,
     };
   }
 
@@ -575,74 +604,100 @@ function parseCodexChatPayload(raw: string): {
     if (!data || data === "[DONE]") continue;
     try {
       const json = JSON.parse(data) as Record<string, unknown>;
-      if (typeof json.text === "string") chunks.push(json.text);
       if (
         json.type === "response.output_text.delta" &&
         typeof json.delta === "string"
       ) {
-        chunks.push(json.delta);
+        deltaText.push(json.delta);
+      } else if (
+        json.type === "response.output_text.done" &&
+        typeof json.text === "string"
+      ) {
+        // Full text event — keep as fallback only; deltas already have it.
+        if (!deltaText.length) finalText.push(json.text);
+      } else if (typeof json.text === "string" && !json.type) {
+        deltaText.push(json.text);
       }
+
       if (
         json.type === "response.reasoning_summary_text.delta" &&
         typeof json.delta === "string"
       ) {
-        summaryChunks.push(json.delta);
-      }
-      if (
+        summaryDeltas.push(json.delta);
+      } else if (
         json.type === "response.reasoning_summary_text.done" &&
         typeof json.text === "string"
       ) {
-        summaryChunks.push(json.text);
-      }
-      if (
-        (json.type === "response.reasoning_summary_part.added" ||
-          json.type === "response.reasoning_summary_part.done") &&
+        if (!summaryDeltas.length) summaryFinal.push(json.text);
+      } else if (
+        json.type === "response.reasoning_summary_part.done" &&
         typeof json.part === "object" &&
         json.part
       ) {
         const part = json.part as { text?: string };
-        if (part.text) summaryChunks.push(part.text);
+        if (part.text && !summaryDeltas.length) summaryFinal.push(part.text);
+      } else if (
+        json.type === "response.reasoning_summary_part.added" &&
+        typeof json.part === "object" &&
+        json.part
+      ) {
+        // Ignore added-with-empty; prefer deltas / done to avoid dupes.
+        const part = json.part as { text?: string };
+        if (part.text && !summaryDeltas.length && !summaryFinal.length) {
+          summaryFinal.push(part.text);
+        }
       }
+
       if (
         json.type === "response.reasoning_text.delta" &&
         typeof json.delta === "string"
       ) {
         reasoningTextChunks.push(json.delta);
-      }
-      if (
+      } else if (
         json.type === "response.reasoning_text.done" &&
         typeof json.text === "string"
       ) {
-        reasoningTextChunks.push(json.text);
+        if (!reasoningTextChunks.length) reasoningTextChunks.push(json.text);
       }
+
       if (
         json.type === "response.output_item.done" ||
         json.type === "response.output_item.added"
       ) {
         const item = json.item as Record<string, unknown> | undefined;
         if (item?.type === "reasoning") {
-          pushThinkBlock(thinkBlocks, item, "reasoning");
-          const summary = summaryTextFromReasoningItem(item);
-          if (summary) summaryChunks.push(summary);
+          pushThinkBlock(thinkBlocksArr, item, "reasoning");
+        }
+        if (
+          item?.type === "message" &&
+          Array.isArray(item.content) &&
+          !deltaText.length
+        ) {
+          for (const c of item.content as Array<{ text?: string }>) {
+            if (c.text) finalText.push(c.text);
+          }
         }
       }
+
       if (json.type === "response.completed") {
         const response = json.response as Record<string, unknown> | undefined;
         if (response) {
-          extractFromResponseObject(
-            response,
-            chunks,
-            summaryChunks,
-            thinkBlocks,
-          );
+          extractThinkingFromResponseObject(response, thinkBlocksArr);
+          // Only use completed text if we never got streaming deltas.
+          if (!deltaText.length) {
+            const completed = extractTextFromResponseObject(response);
+            if (completed) finalText.push(completed);
+          }
         }
       }
+
       const choices = json.choices as
         | Array<{ delta?: { content?: string }; message?: { content?: string } }>
         | undefined;
-      if (choices?.[0]?.delta?.content) chunks.push(choices[0].delta.content);
-      if (choices?.[0]?.message?.content) {
-        chunks.push(choices[0].message.content);
+      if (choices?.[0]?.delta?.content) {
+        deltaText.push(choices[0].delta.content);
+      } else if (choices?.[0]?.message?.content && !deltaText.length) {
+        finalText.push(choices[0].message.content);
       }
     } catch {
       // ignore malformed SSE chunks
@@ -651,7 +706,7 @@ function parseCodexChatPayload(raw: string): {
 
   if (reasoningTextChunks.length) {
     pushThinkBlock(
-      thinkBlocks,
+      thinkBlocksArr,
       {
         type: "reasoning",
         content: reasoningTextChunks.join(""),
@@ -660,22 +715,24 @@ function parseCodexChatPayload(raw: string): {
     );
   }
 
-  // Prefer completed reasoning items for the summary; fall back to streamed deltas.
-  const blockSummary = thinkBlocks
+  const blockSummary = thinkBlocksArr
     .map((b) => b.summary || b.content || "")
     .filter(Boolean)
     .join("\n\n");
-  const streamedSummary = summaryChunks.join("");
   const thinkingSummary =
     blockSummary ||
-    streamedSummary ||
+    uniqueJoin(summaryDeltas) ||
+    uniqueJoin(summaryFinal) ||
     reasoningTextChunks.join("") ||
     "";
 
   return {
-    text: chunks.join("") || raw.slice(0, 2000),
+    text:
+      uniqueJoin(deltaText) ||
+      uniqueJoin(finalText) ||
+      raw.slice(0, 2000),
     thinkingSummary,
-    thinkBlocks,
+    thinkBlocks: thinkBlocksArr,
   };
 }
 
