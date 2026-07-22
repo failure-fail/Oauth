@@ -660,6 +660,7 @@ export async function exposeProviderCredentials(
         },
         docs: KIMI_OAUTH.docsUrl,
         note:
+          endpoints.note ||
           "Moonshot Kimi Code device OAuth (same public client as kimi-cli). OpenAI-compatible coding API at api.kimi.com/coding/v1. Requests must send KimiCLI User-Agent + X-Msh-* desktop fingerprint headers.",
       };
     }

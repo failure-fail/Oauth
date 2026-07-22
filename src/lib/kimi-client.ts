@@ -68,10 +68,23 @@ function formHeaders(deviceId?: string): Record<string, string> {
   return h;
 }
 
+/** Non-Worker relay for api.kimi.com/coding (Worker egress is CF-challenged). */
+export function kimiRelayBase(): string | null {
+  const value = process.env.FAILURE_KIMI_BASE_URL?.trim();
+  return value ? value.replace(/\/$/, "") : null;
+}
+
 export function kimiApiBase(secret?: StoredProviderSecret): string {
+  // Prefer relay on Workers — stored apiBase is usually api.kimi.com which is blocked.
+  const relay = kimiRelayBase();
+  if (relay) return relay;
   const fromRaw =
     typeof secret?.raw?.apiBase === "string" ? secret.raw.apiBase : null;
   return (fromRaw || KIMI_OAUTH.apiBase).replace(/\/$/, "");
+}
+
+export function kimiTransport(): "relay" | "direct" {
+  return kimiRelayBase() ? "relay" : "direct";
 }
 
 export type KimiDeviceAuthorization = {
@@ -290,10 +303,12 @@ export async function listKimiModels(
   models: ProviderModel[];
   source: "live" | "fallback";
   warning?: string;
+  transport?: "relay" | "direct";
 }> {
   const token = secret.accessToken;
   if (!token) throw new Error("Kimi access token missing");
   const base = kimiApiBase(secret);
+  const transport = kimiTransport();
   try {
     const res = await fetch(`${base}/models`, {
       headers: kimiHeaders(token, deviceIdOf(secret)),
@@ -307,18 +322,24 @@ export async function listKimiModels(
       return {
         models: FALLBACK_MODELS,
         source: "fallback",
+        transport,
         warning: "Kimi returned an empty model list; using known models.",
       };
     }
-    return { models, source: "live" };
+    return { models, source: "live", transport };
   } catch (error) {
+    const hint =
+      transport === "direct"
+        ? " Set FAILURE_KIMI_BASE_URL to scripts/kimi-relay.mjs (Worker egress to api.kimi.com is CF-blocked)."
+        : "";
     return {
       models: FALLBACK_MODELS,
       source: "fallback",
+      transport,
       warning:
         error instanceof Error
-          ? `${error.message} — using known Kimi models.`
-          : "Live Kimi models failed — using known models.",
+          ? `${error.message} — using known Kimi models.${hint}`
+          : `Live Kimi models failed — using known models.${hint}`,
     };
   }
 }
@@ -379,8 +400,12 @@ export async function chatKimi(
   });
   if (!res.ok) {
     const text = await res.text();
+    const hint =
+      kimiTransport() === "direct"
+        ? " Set FAILURE_KIMI_BASE_URL to a Node relay (see scripts/kimi-relay.mjs)."
+        : "";
     throw new Error(
-      `Kimi chat failed (${selected}): ${formatKimiUpstreamError(res.status, text)}`,
+      `Kimi chat failed (${selected}): ${formatKimiUpstreamError(res.status, text)}${hint}`,
     );
   }
   return {
@@ -388,17 +413,24 @@ export async function chatKimi(
     model: selected,
     models,
     warning: listed.warning,
+    transport: kimiTransport(),
     providerLabel: "Kimi Code",
   };
 }
 
 export function kimiCredentialEndpoints(secret: StoredProviderSecret) {
   const base = kimiApiBase(secret);
+  const relay = kimiRelayBase();
   return {
     base,
     models: `${base}/models`,
     chatCompletions: `${base}/chat/completions`,
     token: KIMI_OAUTH.tokenUrl,
     deviceAuthorization: KIMI_OAUTH.deviceCodeUrl,
+    upstream: KIMI_OAUTH.apiBase,
+    transport: kimiTransport(),
+    note: relay
+      ? "Using FAILURE_KIMI_BASE_URL relay (required on Cloudflare Workers)."
+      : "Direct api.kimi.com/coding calls are CF-challenged from Workers; set FAILURE_KIMI_BASE_URL to scripts/kimi-relay.mjs.",
   };
 }

@@ -232,6 +232,7 @@ export async function listProviderModels(input: {
         models: result.models,
         warning: result.warning,
         source: result.source,
+        transport: result.transport,
       };
     }
     default:

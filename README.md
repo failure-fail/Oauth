@@ -81,6 +81,13 @@ UserInfo (with `providers` scope) returns linked credential packages:
 pnpm relay:codex
 ```
 
+`api.kimi.com/coding` is also CF-challenged from Worker egress (OAuth on `auth.kimi.com` still works). For Kimi chat/models from Workers, run:
+
+```bash
+pnpm relay:kimi
+```
+
+Then set `FAILURE_KIMI_BASE_URL` to that relay URL (same pattern as Codex).
 ## Security notes
 
 - Provider secrets are encrypted at rest (AES-256-GCM).
