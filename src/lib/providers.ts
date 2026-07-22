@@ -1223,12 +1223,20 @@ export async function pollCopilotDeviceOAuth(input: {
     },
     body,
   });
-  const json = (await res.json()) as {
+  const text = await res.text();
+  let json: {
     error?: string;
     error_description?: string;
     access_token?: string;
     interval?: number;
-  };
+  } = {};
+  try {
+    json = JSON.parse(text) as typeof json;
+  } catch {
+    throw new Error(
+      `Copilot poll returned non-JSON (${res.status}): ${text.slice(0, 200)}`,
+    );
+  }
   if (!res.ok || json.error) {
     if (
       json.error === "authorization_pending" ||

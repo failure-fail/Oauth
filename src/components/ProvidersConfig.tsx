@@ -126,6 +126,8 @@ export function ProvidersConfig({
   const [claudeAck, setClaudeAck] = useState(false);
   const [grokFlow, setGrokFlow] = useState<GrokFlow | null>(null);
   const [copilotFlow, setCopilotFlow] = useState<CopilotFlow | null>(null);
+  const [copilotPollNote, setCopilotPollNote] = useState<string | null>(null);
+  const [copilotChecking, setCopilotChecking] = useState(false);
   const [mimoFlow, setMimoFlow] = useState<MimoFlow | null>(null);
   const [mimoCode, setMimoCode] = useState("");
   const [mimoApiKey, setMimoApiKey] = useState("");
@@ -187,72 +189,201 @@ export function ProvidersConfig({
 
   useEffect(() => {
     if (!grokFlow) return;
+    const flowId = grokFlow.flowId;
     let cancelled = false;
-    const timer = setInterval(async () => {
+    let delayMs = Math.max(3, grokFlow.interval) * 1000;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    async function pollOnce() {
       try {
-        const data = await call({
-          action: "grok_poll",
-          flowId: grokFlow.flowId,
+        const res = await fetch("/api/providers", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "grok_poll",
+            flowId,
+          }),
         });
+        const data = await res.json();
         if (cancelled) return;
+        if (!res.ok) {
+          if (
+            typeof data.error === "string" &&
+            !/authorization_pending|slow_down/i.test(data.error)
+          ) {
+            setError(data.error);
+            setGrokFlow(null);
+          }
+          return;
+        }
         if (data.status === "connected") {
           setGrokFlow(null);
           setActive(null);
+          setError(null);
           setMessage("Grok Build connected.");
           await refresh();
+          return;
+        }
+        if (data.status === "slow_down") {
+          delayMs = Math.min(delayMs + 2000, 15000);
         }
       } catch {
-        // keep polling until expiry surfaces
+        // keep polling
       }
-    }, Math.max(3, grokFlow.interval) * 1000);
+    }
+
+    async function loop() {
+      await pollOnce();
+      if (cancelled) return;
+      timer = setTimeout(loop, delayMs);
+    }
+
+    void loop();
+    const onResume = () => {
+      if (document.visibilityState === "visible") void pollOnce();
+    };
+    window.addEventListener("focus", onResume);
+    document.addEventListener("visibilitychange", onResume);
     return () => {
       cancelled = true;
-      clearInterval(timer);
+      if (timer) clearTimeout(timer);
+      window.removeEventListener("focus", onResume);
+      document.removeEventListener("visibilitychange", onResume);
     };
   }, [grokFlow]);
 
   useEffect(() => {
     if (!copilotFlow) return;
+    const flowId = copilotFlow.flowId;
     let cancelled = false;
-    const timer = setInterval(async () => {
+    let delayMs = Math.max(2, copilotFlow.interval) * 1000;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let checks = 0;
+
+    async function pollOnce(manual = false) {
+      if (manual) setCopilotChecking(true);
       try {
         const res = await fetch("/api/providers", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             action: "copilot_poll",
-            flowId: copilotFlow.flowId,
+            flowId,
           }),
         });
         const data = await res.json();
-        if (cancelled) return;
+        if (cancelled) return "done" as const;
+        checks += 1;
         if (!res.ok) {
-          // Keep waiting on pending-style races; surface hard failures.
-          if (
-            typeof data.error === "string" &&
-            !/authorization_pending|slow_down/i.test(data.error)
-          ) {
-            setError(data.error);
-            setCopilotFlow(null);
+          const err =
+            typeof data.error === "string" ? data.error : "Copilot poll failed";
+          if (/authorization_pending|slow_down/i.test(err)) {
+            setCopilotPollNote(
+              `Still waiting for GitHub… (check #${checks})`,
+            );
+            return "pending" as const;
           }
-          return;
+          setError(err);
+          setCopilotFlow(null);
+          setCopilotPollNote(null);
+          return "done" as const;
         }
         if (data.status === "connected") {
           setCopilotFlow(null);
           setActive(null);
           setError(null);
+          setCopilotPollNote(null);
           setMessage("GitHub Copilot connected.");
           await refresh();
+          return "done" as const;
         }
-      } catch {
-        // keep polling until expiry surfaces
+        if (data.status === "slow_down") {
+          delayMs = Math.min(delayMs + 3000, 20000);
+          setCopilotPollNote(
+            `GitHub asked us to slow down — retrying (check #${checks})…`,
+          );
+          return "pending" as const;
+        }
+        setCopilotPollNote(
+          `Waiting for GitHub approval… (check #${checks})`,
+        );
+        return "pending" as const;
+      } catch (err) {
+        setCopilotPollNote(
+          err instanceof Error
+            ? `Poll error: ${err.message}`
+            : "Poll error — retrying…",
+        );
+        return "pending" as const;
+      } finally {
+        if (manual) setCopilotChecking(false);
       }
-    }, Math.max(3, copilotFlow.interval) * 1000);
+    }
+
+    async function loop() {
+      const result = await pollOnce();
+      if (cancelled || result === "done") return;
+      timer = setTimeout(loop, delayMs);
+    }
+
+    void loop();
+    const onResume = () => {
+      if (document.visibilityState === "visible") void pollOnce();
+    };
+    window.addEventListener("focus", onResume);
+    document.addEventListener("visibilitychange", onResume);
     return () => {
       cancelled = true;
-      clearInterval(timer);
+      if (timer) clearTimeout(timer);
+      window.removeEventListener("focus", onResume);
+      document.removeEventListener("visibilitychange", onResume);
     };
   }, [copilotFlow]);
+
+  async function checkCopilotNow() {
+    if (!copilotFlow || copilotChecking) return;
+    const flowId = copilotFlow.flowId;
+    setCopilotChecking(true);
+    try {
+      const res = await fetch("/api/providers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "copilot_poll",
+          flowId,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        const err =
+          typeof data.error === "string" ? data.error : "Copilot poll failed";
+        if (!/authorization_pending|slow_down/i.test(err)) {
+          setError(err);
+          setCopilotFlow(null);
+          setCopilotPollNote(null);
+        } else {
+          setCopilotPollNote("GitHub still pending — finish authorizing, then check again.");
+        }
+        return;
+      }
+      if (data.status === "connected") {
+        setCopilotFlow(null);
+        setActive(null);
+        setError(null);
+        setCopilotPollNote(null);
+        setMessage("GitHub Copilot connected.");
+        await refresh();
+        return;
+      }
+      setCopilotPollNote(
+        "GitHub still pending — after you click Authorize, return here and press Check now.",
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Copilot check failed");
+    } finally {
+      setCopilotChecking(false);
+    }
+  }
 
   async function disconnect(provider: ProviderId) {
     await call({ action: "disconnect", provider });
@@ -502,6 +633,8 @@ export function ProvidersConfig({
                       className="btn-primary"
                       disabled={busy}
                       onClick={async () => {
+                        setCopilotPollNote(null);
+                        setError(null);
                         const data = await call({ action: "copilot_start" });
                         setCopilotFlow(data);
                         window.open(
@@ -528,9 +661,22 @@ export function ProvidersConfig({
                       </p>
                       <p className="user-code">{copilotFlow.userCode}</p>
                       <p className="muted">
-                        Waiting for GitHub approval, then exchanging a Copilot
-                        session token…
+                        After GitHub shows “authorized”, return to this tab.
+                        Background tabs throttle polling — use Check now.
                       </p>
+                      {copilotPollNote ? (
+                        <p className="muted">{copilotPollNote}</p>
+                      ) : null}
+                      <button
+                        type="button"
+                        className="btn-primary"
+                        disabled={copilotChecking}
+                        onClick={() => void checkCopilotNow()}
+                      >
+                        {copilotChecking
+                          ? "Checking…"
+                          : "I’ve authorized — Check now"}
+                      </button>
                     </>
                   )}
                 </div>
