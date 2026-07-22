@@ -14,10 +14,19 @@ const FALLBACK_MODELS: ProviderModel[] = [
 ];
 
 function asciiHeader(value: string) {
-  return value.replace(/[^\x20-\x7E]/g, "?").trim() || "unknown";
+  // Match kimi-cli `_ascii_header_value`: strip non-ASCII, keep printable.
+  return value.replace(/[^\x20-\x7E]/g, "").trim() || "unknown";
 }
 
-/** Headers used by MoonshotAI/kimi-cli for OAuth + coding API. */
+/** kimi-cli persists device ids as UUIDv4 hex without dashes. */
+export function newKimiDeviceId() {
+  return randomUUID().replace(/-/g, "");
+}
+
+/**
+ * Headers used by MoonshotAI/kimi-cli for OAuth + coding API.
+ * UA must be `KimiCLI/{version}`; X-Msh-* must look like a desktop CLI — not a Worker.
+ */
 export function kimiHeaders(
   token?: string,
   deviceId?: string,
@@ -28,13 +37,29 @@ export function kimiHeaders(
     "User-Agent": KIMI_OAUTH.userAgent,
     "X-Msh-Platform": KIMI_OAUTH.platform,
     "X-Msh-Version": KIMI_OAUTH.version,
-    "X-Msh-Device-Name": asciiHeader("failure-ai-oauth"),
-    "X-Msh-Device-Model": asciiHeader("cloudflare-worker"),
-    "X-Msh-Os-Version": asciiHeader("linux"),
-    "X-Msh-Device-Id": asciiHeader(deviceId || randomUUID()),
+    "X-Msh-Device-Name": asciiHeader(KIMI_OAUTH.deviceName),
+    "X-Msh-Device-Model": asciiHeader(KIMI_OAUTH.deviceModel),
+    "X-Msh-Os-Version": asciiHeader(KIMI_OAUTH.osVersion),
+    "X-Msh-Device-Id": asciiHeader(deviceId || newKimiDeviceId()),
   };
   if (token) headers.Authorization = `Bearer ${token}`;
   return headers;
+}
+
+/** Shorten upstream errors; detect Cloudflare challenge HTML. */
+export function formatKimiUpstreamError(status: number, body: string) {
+  const snippet = body.slice(0, 280).replace(/\s+/g, " ").trim();
+  if (
+    /Attention Required|Cloudflare|cf-browser-verification|Just a moment/i.test(
+      body,
+    )
+  ) {
+    return `${status} Cloudflare challenged this request (bot protection). Retry after reconnect; if it persists, Kimi may be blocking Worker egress IPs.`;
+  }
+  if (/only available for Coding Agents/i.test(body)) {
+    return `${status} Kimi rejected the client fingerprint (need KimiCLI User-Agent + X-Msh headers).`;
+  }
+  return `${status} ${snippet}`;
 }
 
 function formHeaders(deviceId?: string): Record<string, string> {
@@ -60,7 +85,7 @@ export type KimiDeviceAuthorization = {
 };
 
 export async function requestKimiDeviceCode(): Promise<KimiDeviceAuthorization> {
-  const deviceId = randomUUID();
+  const deviceId = newKimiDeviceId();
   const res = await fetch(KIMI_OAUTH.deviceCodeUrl, {
     method: "POST",
     headers: formHeaders(deviceId),
@@ -69,7 +94,7 @@ export async function requestKimiDeviceCode(): Promise<KimiDeviceAuthorization> 
   const text = await res.text();
   if (!res.ok) {
     throw new Error(
-      `Kimi device authorization failed: ${res.status} ${text.slice(0, 240)}`,
+      `Kimi device authorization failed: ${formatKimiUpstreamError(res.status, text)}`,
     );
   }
   const data = JSON.parse(text) as {
@@ -150,7 +175,7 @@ export async function pollKimiDeviceCode(input: {
   } catch {
     return {
       status: "failed",
-      error: `Kimi poll returned non-JSON (${res.status}): ${text.slice(0, 200)}`,
+      error: `Kimi poll returned non-JSON: ${formatKimiUpstreamError(res.status, text)}`,
     };
   }
 
@@ -206,7 +231,7 @@ export async function refreshKimiTokens(
   const text = await res.text();
   if (!res.ok) {
     throw new Error(
-      `Kimi token refresh failed: ${res.status} ${text.slice(0, 240)}`,
+      `Kimi token refresh failed: ${formatKimiUpstreamError(res.status, text)}`,
     );
   }
   const data = JSON.parse(text) as {
@@ -275,7 +300,7 @@ export async function listKimiModels(
     });
     if (!res.ok) {
       const text = await res.text();
-      throw new Error(`${res.status} ${text.slice(0, 200)}`);
+      throw new Error(formatKimiUpstreamError(res.status, text));
     }
     const models = pickModels(await res.json());
     if (!models.length) {
@@ -355,7 +380,7 @@ export async function chatKimi(
   if (!res.ok) {
     const text = await res.text();
     throw new Error(
-      `Kimi chat failed (${selected}): ${res.status} ${text.slice(0, 400)}`,
+      `Kimi chat failed (${selected}): ${formatKimiUpstreamError(res.status, text)}`,
     );
   }
   return {

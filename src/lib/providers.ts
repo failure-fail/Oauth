@@ -25,8 +25,11 @@ import {
   requestCopilotDeviceCode,
 } from "./copilot-auth";
 import {
+  formatKimiUpstreamError,
   kimiCredentialEndpoints,
+  kimiHeaders,
   listKimiModels,
+  newKimiDeviceId,
   pollKimiDeviceCode,
   refreshKimiTokens,
   requestKimiDeviceCode,
@@ -646,6 +649,10 @@ export async function exposeProviderCredentials(
           "User-Agent": KIMI_OAUTH.userAgent,
           "X-Msh-Platform": KIMI_OAUTH.platform,
           "X-Msh-Version": KIMI_OAUTH.version,
+          "X-Msh-Device-Name": KIMI_OAUTH.deviceName,
+          "X-Msh-Device-Model": KIMI_OAUTH.deviceModel,
+          "X-Msh-Os-Version": KIMI_OAUTH.osVersion,
+          "X-Msh-Device-Id": "<stable device id>",
         },
         oauth: {
           clientId: KIMI_OAUTH.clientId,
@@ -653,7 +660,7 @@ export async function exposeProviderCredentials(
         },
         docs: KIMI_OAUTH.docsUrl,
         note:
-          "Moonshot Kimi Code device OAuth (same public client as kimi-cli). OpenAI-compatible coding API at api.kimi.com/coding/v1.",
+          "Moonshot Kimi Code device OAuth (same public client as kimi-cli). OpenAI-compatible coding API at api.kimi.com/coding/v1. Requests must send KimiCLI User-Agent + X-Msh-* desktop fingerprint headers.",
       };
     }
     case "copilot": {
@@ -1602,19 +1609,14 @@ export async function connectKimiApiKey(
     /\/$/,
     "",
   );
+  const deviceId = newKimiDeviceId();
   const probe = await fetch(`${resolvedBase}/models`, {
-    headers: {
-      Authorization: `Bearer ${key}`,
-      Accept: "application/json",
-      "User-Agent": KIMI_OAUTH.userAgent,
-      "X-Msh-Platform": KIMI_OAUTH.platform,
-      "X-Msh-Version": KIMI_OAUTH.version,
-    },
+    headers: kimiHeaders(key, deviceId),
   });
   if (!probe.ok) {
     const text = await probe.text();
     throw new Error(
-      `Kimi key rejected (${probe.status}): ${text.slice(0, 200)}`,
+      `Kimi key rejected: ${formatKimiUpstreamError(probe.status, text)}`,
     );
   }
 
@@ -1627,7 +1629,7 @@ export async function connectKimiApiKey(
       type: "kimi_api_key",
       accessToken: key,
       setupToken: key,
-      raw: { apiBase: resolvedBase },
+      raw: { apiBase: resolvedBase, deviceId },
     }),
     meta: {
       method: "api_key",

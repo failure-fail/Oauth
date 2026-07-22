@@ -132,9 +132,20 @@ export const KIMI_OAUTH = {
   grantType: "urn:ietf:params:oauth:grant-type:device_code",
   apiBase: "https://api.kimi.com/coding/v1",
   docsUrl: "https://www.kimi.com/code",
+  /** Must match MoonshotAI/kimi-cli — coding API 403s other UA prefixes. */
   platform: "kimi_cli",
-  version: "0.28.0",
-  userAgent: "kimi-code-cli/0.28.0",
+  version: "1.49.0",
+  userAgent: "KimiCLI/1.49.0",
+  /**
+   * Spoofed desktop fingerprint for Worker egress.
+   * Never advertise cloudflare-worker — api.kimi.com is behind Cloudflare and
+   * that label triggers bot challenges (HTML "Attention Required!").
+   * Shapes mirror kimi-cli `_device_model()` / `platform.version()` on macOS.
+   */
+  deviceName: "MacBook-Pro.local",
+  deviceModel: "macOS 15.3.1 arm64",
+  osVersion:
+    "Darwin Kernel Version 24.3.0: Thu Jan 2 20:24:16 PST 2025; root:xnu-11417.81.5~1/RELEASE_ARM64_T6000",
 };
 
 /**
