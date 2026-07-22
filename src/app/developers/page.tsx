@@ -16,7 +16,7 @@ export default function DevelopersPage() {
           the dashboard, show the frosted glass Sign in with Failure button, and
           exchange the code for tokens that unlock linked providers. Full
           integration guide:{" "}
-          <a href="https://github.com/failure-fail/Oauth/blob/main/docs/INTEGRATION.md">
+          <a href="https://github.com/failure-fail/Oauth/blob/cursor/universal-failure-ai-oauth-44ee/docs/INTEGRATION.md">
             docs/INTEGRATION.md
           </a>
           .
