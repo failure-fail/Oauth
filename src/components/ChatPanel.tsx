@@ -113,8 +113,8 @@ export function ChatPanel({
             id: `models-${Date.now()}`,
             role: "system",
             text: next.length
-              ? `Loaded ${next.length} models from ${providerId}${data.source ? ` · ${data.source}` : ""}${data.transport ? `/${data.transport}` : ""}.`
-              : `No models returned by ${providerId}.`,
+              ? `Loaded ${next.length} live models from ${providerId}${data.source ? ` · ${data.source}` : ""}${data.transport ? `/${data.transport}` : ""}.`
+              : `No live models from ${providerId}${data.source === "error" ? " (catalog fetch failed — nothing guessed)" : ""}.`,
             provider: providerId,
           },
         ]);
