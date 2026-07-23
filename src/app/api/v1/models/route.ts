@@ -6,6 +6,8 @@ import {
   requireFailureBearer,
 } from "@/lib/openai-compat";
 
+export const dynamic = "force-dynamic";
+
 export async function OPTIONS() {
   return optionsResponse();
 }

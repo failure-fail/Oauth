@@ -12,18 +12,22 @@ import {
   type OpenAiChatRequest,
 } from "@/lib/openai-compat";
 
+export const dynamic = "force-dynamic";
+
 const messageSchema = z.object({
   role: z.string().min(1),
-  content: z.union([
-    z.string(),
-    z.array(
-      z.object({
-        type: z.string().optional(),
-        text: z.string().optional(),
-      }),
-    ),
-    z.null(),
-  ]).optional(),
+  content: z
+    .union([
+      z.string(),
+      z.array(
+        z.object({
+          type: z.string().optional(),
+          text: z.string().optional(),
+        }),
+      ),
+      z.null(),
+    ])
+    .optional(),
   name: z.string().optional(),
 });
 
