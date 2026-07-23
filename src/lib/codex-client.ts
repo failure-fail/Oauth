@@ -144,18 +144,60 @@ function defaultCodexBase(): string {
 }
 
 export function isCloudflareChallenge(res: Response, bodyText: string): boolean {
-  if (res.status !== 403 && res.status !== 503) return false;
   const ctype = res.headers.get("content-type") || "";
-  if (ctype.includes("text/html")) return true;
   if (res.headers.get("cf-mitigated")) return true;
+  if (ctype.includes("text/html") && (res.status === 403 || res.status >= 500)) {
+    return true;
+  }
   const sample = bodyText.slice(0, 500).toLowerCase();
   return (
     sample.includes("<html") ||
     sample.includes("cf-browser-verification") ||
     sample.includes("enable javascript and cookies") ||
+    sample.includes("attention required") ||
+    sample.includes("just a moment") ||
     sample.includes("enlarge-appear") ||
-    sample.includes("_cf_chl")
+    sample.includes("_cf_chl") ||
+    // Quick Tunnel / origin down: plain "error code: 1016" (Origin DNS error), etc.
+    /error code:\s*10\d{2}/i.test(sample)
   );
+}
+
+/** Human message when Worker→relay→upstream returns Cloudflare noise instead of JSON. */
+export function formatCodexUpstreamError(
+  status: number,
+  bodyText: string,
+  transport?: string,
+): string {
+  const snippet = bodyText.slice(0, 240).replace(/\s+/g, " ").trim();
+  if (/error code:\s*1016/i.test(bodyText)) {
+    return `${status} Codex relay origin is down (Cloudflare 1016). Restart \`pnpm relay:codex\` + cloudflared and update FAILURE_CODEX_BASE_URL.`;
+  }
+  if (/error code:\s*1033/i.test(bodyText)) {
+    return `${status} Codex relay tunnel offline (Cloudflare 1033). Restart cloudflared for FAILURE_CODEX_BASE_URL.`;
+  }
+  if (
+    /error code:\s*10\d{2}/i.test(bodyText) ||
+    /attention required|just a moment|cf-browser-verification|<!DOCTYPE html/i.test(
+      bodyText,
+    )
+  ) {
+    return `${status} Cloudflare blocked/challenged Codex upstream${transport ? ` via ${transport}` : ""}. Check FAILURE_CODEX_BASE_URL relay.`;
+  }
+  return `${status} ${snippet}`;
+}
+
+function parseJsonBody(text: string, label: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    if (/error code:\s*10\d{2}/i.test(text) || /<!DOCTYPE html/i.test(text)) {
+      throw new Error(formatCodexUpstreamError(0, text));
+    }
+    throw new Error(
+      `${label} returned non-JSON: ${text.slice(0, 160).replace(/\s+/g, " ")}`,
+    );
+  }
 }
 
 function accountId(secret: StoredProviderSecret): string {
@@ -406,7 +448,7 @@ async function fetchUpstream(
       const text = await res.text();
       if (isCloudflareChallenge(res, text)) {
         errors.push(
-          `${candidate.transport} blocked by Cloudflare challenge at ${candidate.baseUrl}`,
+          `${candidate.transport} blocked by Cloudflare at ${candidate.baseUrl}: ${formatCodexUpstreamError(res.status, text, candidate.transport)}`,
         );
         continue;
       }
@@ -440,9 +482,13 @@ export async function listCodexModels(
       flavor,
     );
     if (!res.ok) {
-      throw new Error(`Upstream models failed: ${res.status} ${text.slice(0, 240)}`);
+      throw new Error(
+        `Upstream models failed: ${formatCodexUpstreamError(res.status, text, transport)}`,
+      );
     }
-    const models = normalizeLiveModels(pickModelIds(JSON.parse(text)));
+    const models = normalizeLiveModels(
+      pickModelIds(parseJsonBody(text, "Codex /models")),
+    );
     const chatModels = models.filter((m) => m.kind !== "image");
     if (!chatModels.length) {
       return {
@@ -857,7 +903,7 @@ export async function chatCodex(
   );
   if (!res.ok) {
     throw new Error(
-      `${label} chat failed (${selected} via ${transport}): ${res.status} ${text.slice(0, 400)}`,
+      `${label} chat failed (${selected} via ${transport}): ${formatCodexUpstreamError(res.status, text, transport)}`,
     );
   }
   const parsed = parseCodexChatPayload(text);
@@ -950,15 +996,17 @@ export async function generateCodexImage(
       return generateCodexImageViaResponses(secret, input, flavor);
     }
     throw new Error(
-      `Image generation failed via ${transport}: ${res.status} ${text.slice(0, 400)}`,
+      `Image generation failed via ${transport}: ${formatCodexUpstreamError(res.status, text, transport)}`,
     );
   }
 
   let parsed: unknown;
   try {
-    parsed = JSON.parse(text);
-  } catch {
-    throw new Error("Image generation returned non-JSON");
+    parsed = parseJsonBody(text, "Codex image generation");
+  } catch (error) {
+    throw error instanceof Error
+      ? error
+      : new Error("Image generation returned non-JSON");
   }
   const images = extractImageB64(parsed);
   if (!images.length) {

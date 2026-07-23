@@ -120,7 +120,23 @@ export function ChatPanel({
 
     fetch(`/api/chat/models?provider=${encodeURIComponent(providerId)}`)
       .then(async (res) => {
-        const data = await res.json();
+        const raw = await res.text();
+        let data: {
+          error?: string;
+          models?: ProviderModel[];
+          warning?: string;
+          source?: string;
+          transport?: string;
+        } = {};
+        try {
+          data = raw.trim() ? (JSON.parse(raw) as typeof data) : {};
+        } catch {
+          throw new Error(
+            res.ok
+              ? `Models response was not JSON: ${raw.slice(0, 160)}`
+              : `Models request failed (${res.status}): ${raw.slice(0, 160)}`,
+          );
+        }
         if (cancelled) return;
         if (!res.ok) throw new Error(data.error || "Failed to fetch models");
         const next = (data.models || []) as ProviderModel[];
@@ -278,7 +294,26 @@ export function ChatPanel({
             includeThinking: true,
           }),
         });
-        const data = await res.json();
+        const raw = await res.text();
+        let data: {
+          error?: string;
+          models?: ProviderModel[];
+          warning?: string;
+          text?: string;
+          model?: string;
+          thinking?: {
+            level?: ThinkingLevel;
+            summary?: string;
+            blocks?: ThinkBlock[];
+          };
+        };
+        try {
+          data = raw.trim() ? (JSON.parse(raw) as typeof data) : {};
+        } catch {
+          throw new Error(
+            `Chat failed (${res.status}): ${raw.slice(0, 160) || "non-JSON response"}`,
+          );
+        }
         if (!res.ok) throw new Error(data.error || "Chat failed");
         if (Array.isArray(data.models) && data.models.length) {
           setModels(data.models);
