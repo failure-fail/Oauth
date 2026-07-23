@@ -33,8 +33,8 @@ export default async function DashboardPage() {
         <p className="eyebrow">Dashboard</p>
         <h1 className="page-title">{user.name}</h1>
         <p className="muted">
-          Linked providers, live chat/image tests, and the apps that consume
-          Failure OAuth.
+          Linked providers, live chat tests, OpenAI-compatible <code>/v1</code>{" "}
+          access, and the apps that consume Failure OAuth.
         </p>
       </section>
 
@@ -44,8 +44,8 @@ export default async function DashboardPage() {
             {connections.length}/{PROVIDERS.length} providers linked
           </h2>
           <p className="muted">
-            Connect once. Test thinking levels and models in Chat. Apps
-            receive credential packages via userinfo.
+            Connect once. Test in Chat, or call{" "}
+            <code>/v1/chat/completions</code> with an OpenAI SDK.
           </p>
         </div>
         <div className="dash-provider-summary__pills">
@@ -65,6 +65,9 @@ export default async function DashboardPage() {
         <div className="hero-cta">
           <Link className="btn-primary" href="/dashboard/chat">
             Open live chat
+          </Link>
+          <Link className="btn-secondary" href="/dashboard/openai">
+            OpenAI API
           </Link>
           <Link className="btn-secondary" href="/account/providers">
             Configure providers
