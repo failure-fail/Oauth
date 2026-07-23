@@ -37,7 +37,18 @@ Requires Wrangler auth (`CLOUDFLARE_API_TOKEN`). Data is stored in Cloudflare KV
 
 ## Integrate as an app
 
-Full guide: **[docs/INTEGRATION.md](./docs/INTEGRATION.md)** (PKCE, userinfo credential packages, Codex/Antigravity/Claude/Grok call shapes).
+Full guide: **[docs/INTEGRATION.md](./docs/INTEGRATION.md)** (PKCE, OpenAI-compatible `/v1` chat, userinfo credential packages, Codex/Antigravity/Claude/Grok call shapes).
+
+### OpenAI-compatible API
+
+Point any OpenAI SDK at Failure with a user access token (`providers` scope):
+
+```bash
+export OPENAI_BASE_URL=https://oauth.failure.fail/v1
+export OPENAI_API_KEY=<failure_access_token>
+```
+
+Model ids are `provider/model` (e.g. `codex/gpt-5.6-sol`, `kimi/kimi-for-coding`). See INTEGRATION.md § OpenAI-compatible proxy.
 
 Quick path:
 

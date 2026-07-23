@@ -117,6 +117,10 @@ export function discoveryDocument() {
     scopes_supported: ["openid", "profile", "email", "offline_access", "providers"],
     subject_types_supported: ["public"],
     id_token_signing_alg_values_supported: ["HS256"],
+    /** OpenAI-compatible chat proxy (Bearer Failure access token + providers scope). */
+    "x-failure-openai-base": `${base}/v1`,
+    "x-failure-openai-models": `${base}/v1/models`,
+    "x-failure-openai-chat-completions": `${base}/v1/chat/completions`,
     service_documentation: `${base}/developers`,
     ui_locales_supported: ["en"],
     claims_supported: [

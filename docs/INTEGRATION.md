@@ -36,6 +36,8 @@ You get a `client_id` like `fail_…`.
 | Authorize | `GET` | `https://oauth.failure.fail/oauth/authorize` |
 | Token | `POST` | `https://oauth.failure.fail/api/oauth/token` |
 | UserInfo | `GET` | `https://oauth.failure.fail/api/oauth/userinfo` |
+| OpenAI models | `GET` | `https://oauth.failure.fail/v1/models` |
+| OpenAI chat | `POST` | `https://oauth.failure.fail/v1/chat/completions` |
 | UI format | `GET` | `https://oauth.failure.fail/api/ui-format` |
 
 ### Scopes
@@ -235,13 +237,89 @@ If refresh fails for a provider:
 }
 ```
 
-Ask the user to reconnect that provider at https://oauth.failure.fail/account/providers.
+> Prefer calling upstream providers yourself with the credential package when you need streaming, tools, or images. For a drop-in OpenAI SDK path, see the next section.
+
+---
+
+## 4.1 OpenAI-compatible proxy (`/v1`)
+
+Failure exposes a thin **OpenAI Chat Completions** surface so you can point the official OpenAI SDK (or any compatible client) at connected providers.
+
+| | |
+|---|---|
+| Base URL | `https://oauth.failure.fail/v1` |
+| Auth | `Authorization: Bearer <failure_access_token>` |
+| Required scope | `providers` |
+| Models | `GET /v1/models` |
+| Chat | `POST /v1/chat/completions` |
+
+Model ids are **`provider/model`** (also accepts `provider:model`):
+
+| Example | Provider |
+|---|---|
+| `codex/gpt-5.6-sol` | Codex |
+| `copilot/gpt-4.1` | GitHub Copilot |
+| `claude/claude-sonnet-4-20250514` | Claude Code |
+| `kimi/kimi-for-coding` | Kimi Code |
+| `mimo/mimo-v2.5-pro` | Xiaomi MiMo |
+| `grok/grok-4` | Grok Build |
+| `antigravity/gemini-2.5-pro` | Antigravity |
+
+Optional header: `X-Failure-Provider: codex` with a bare model id.
+
+### OpenAI SDK
+
+```bash
+export OPENAI_BASE_URL=https://oauth.failure.fail/v1
+export OPENAI_API_KEY=<failure_access_token>
+```
+
+```js
+import OpenAI from "openai";
+
+const client = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY, // Failure access_token
+  baseURL: "https://oauth.failure.fail/v1",
+});
+
+const models = await client.models.list();
+
+const chat = await client.chat.completions.create({
+  model: "codex/gpt-5.6-sol",
+  messages: [
+    { role: "system", content: "Be brief." },
+    { role: "user", content: "Say hello." },
+  ],
+});
+
+console.log(chat.choices[0].message.content);
+```
+
+`stream: true` is supported (Failure buffers the provider reply, then emits OpenAI SSE chunks).
+
+`reasoning_effort` (`none` | `low` | `medium` | `high` | `xhigh`) maps to provider thinking where supported.
+
+### curl
+
+```bash
+curl https://oauth.failure.fail/v1/chat/completions \
+  -H "Authorization: Bearer $FAILURE_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "kimi/kimi-for-coding",
+    "messages": [{"role":"user","content":"Hello"}]
+  }'
+```
+
+Errors use the OpenAI error envelope (`{ "error": { "message", "type", "code" } }`).
 
 ---
 
 ## 5. Use provider credentials in your backend
 
-Failure’s `/api/chat` and `/api/images` are **dashboard session helpers** for testing. Integrating apps should call **provider endpoints directly** (from your server) using the credential package from userinfo.
+Failure’s `/api/chat` and `/api/images` are **dashboard session helpers** for testing. Integrating apps should call **provider endpoints directly** (from your server) using the credential package from userinfo — or use the OpenAI-compatible `/v1` proxy above.
+
+If a provider’s credentials show `reconnectRequired`, ask the user to reconnect at https://oauth.failure.fail/account/providers.
 
 ### Codex (`protocol: "codex_backend"`)
 

@@ -38,9 +38,22 @@ export default function DevelopersPage() {
           </li>
           <li>
             Call <code>/api/oauth/userinfo</code> with the access token to read
-            profile + provider credentials.
+            profile + provider credentials — or call the OpenAI-compatible{" "}
+            <code>/v1/chat/completions</code> proxy with the same Bearer token.
           </li>
         </ol>
+
+        <h2 className="developers-h2">OpenAI-compatible API</h2>
+        <p className="muted">
+          Set <code>baseURL</code> to <code>{base}/v1</code> and{" "}
+          <code>apiKey</code> to the Failure access token (<code>providers</code>{" "}
+          scope). Model ids look like <code>codex/gpt-5.6-sol</code>.
+        </p>
+        <code className="code-block">{`OPENAI_BASE_URL=${base}/v1
+OPENAI_API_KEY=<failure_access_token>
+
+GET  ${base}/v1/models
+POST ${base}/v1/chat/completions`}</code>
 
         <h2 className="developers-h2">Discovery</h2>
         <code className="code-block">
