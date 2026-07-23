@@ -45,12 +45,12 @@ export default function DevelopersPage() {
 
         <h2 className="developers-h2">OpenAI-compatible API</h2>
         <p className="muted">
-          Set <code>baseURL</code> to <code>{base}/v1</code> and{" "}
-          <code>apiKey</code> to the Failure access token (<code>providers</code>{" "}
-          scope). Model ids look like <code>codex/gpt-5.6-sol</code>.
+          Create an API key (<code>fsk_…</code>) on the dashboard, set{" "}
+          <code>baseURL</code> to <code>{base}/v1</code>, and use model ids like{" "}
+          <code>codex/gpt-5.6-sol</code>.
         </p>
         <code className="code-block">{`OPENAI_BASE_URL=${base}/v1
-OPENAI_API_KEY=<failure_access_token>
+OPENAI_API_KEY=fsk_…
 
 GET  ${base}/v1/models
 POST ${base}/v1/chat/completions`}</code>

@@ -94,11 +94,35 @@ export async function requireFailureBearer(req: Request): Promise<{
   const header = req.headers.get("authorization") || "";
   const token = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
   if (!token) {
-    throw new OpenAiCompatError(401, "Missing Bearer access token", {
+    throw new OpenAiCompatError(401, "Missing Bearer API key or access token", {
       type: "invalid_request_error",
       code: "invalid_api_key",
     });
   }
+
+  // Personal API keys: fsk_… (persistent OPENAI_API_KEY)
+  if (token.startsWith("fsk_")) {
+    const { hashToken } = await import("./oauth-server");
+    const record = await db.findApiKeyByHash(hashToken(token));
+    if (!record) {
+      throw new OpenAiCompatError(401, "Invalid API key", {
+        code: "invalid_api_key",
+      });
+    }
+    const user = await db.findUserById(record.userId);
+    if (!user) {
+      throw new OpenAiCompatError(401, "Invalid API key", {
+        code: "invalid_api_key",
+      });
+    }
+    void db.touchApiKey(record.id);
+    return {
+      userId: user.id,
+      scope: "openid profile email providers",
+      clientId: "fail_api_key",
+    };
+  }
+
   try {
     const payload = await verifyAccessToken(token);
     const userId = String(payload.sub || "");
@@ -128,7 +152,7 @@ export async function requireFailureBearer(req: Request): Promise<{
     };
   } catch (error) {
     if (error instanceof OpenAiCompatError) throw error;
-    throw new OpenAiCompatError(401, "Invalid access token", {
+    throw new OpenAiCompatError(401, "Invalid API key or access token", {
       code: "invalid_api_key",
     });
   }

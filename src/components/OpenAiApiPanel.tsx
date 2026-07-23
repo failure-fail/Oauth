@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import type { ProviderId } from "@/lib/providers-meta";
 import { PROVIDERS } from "@/lib/providers-meta";
 
@@ -8,6 +8,14 @@ type Connection = {
   provider: ProviderId;
   status: string;
   label?: string;
+};
+
+type KeyRow = {
+  id: string;
+  name: string;
+  prefix: string;
+  createdAt: string;
+  lastUsedAt?: string | null;
 };
 
 const EXAMPLE_MODELS: Partial<Record<ProviderId, string>> = {
@@ -28,8 +36,9 @@ export function OpenAiApiPanel({
   connections: Connection[];
 }) {
   const v1 = `${baseUrl.replace(/\/$/, "")}/v1`;
-  const [token, setToken] = useState<string | null>(null);
-  const [expiresIn, setExpiresIn] = useState<number | null>(null);
+  const [keys, setKeys] = useState<KeyRow[]>([]);
+  const [freshKey, setFreshKey] = useState<string | null>(null);
+  const [keyName, setKeyName] = useState("Default");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
@@ -47,17 +56,56 @@ export function OpenAiApiPanel({
       ? `${linked[0].id}/${EXAMPLE_MODELS[linked[0].id] || "default"}`
       : "codex/gpt-5.6-sol";
 
-  async function mintToken() {
+  const displayKey = freshKey || "<fsk_your_api_key>";
+
+  async function refreshKeys() {
+    const res = await fetch("/api/auth/api-keys");
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Failed to load keys");
+    setKeys(data.keys || []);
+  }
+
+  useEffect(() => {
+    refreshKeys().catch((err: unknown) => {
+      setError(err instanceof Error ? err.message : "Failed to load keys");
+    });
+  }, []);
+
+  async function createKey() {
+    setBusy(true);
+    setError(null);
+    setFreshKey(null);
+    try {
+      const res = await fetch("/api/auth/api-keys", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: keyName.trim() || "Default" }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to create key");
+      setFreshKey(data.key);
+      await refreshKeys();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create key");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function revokeKey(id: string) {
+    if (!confirm("Revoke this API key? Apps using it will stop working.")) return;
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch("/api/auth/openai-token", { method: "POST" });
+      const res = await fetch(`/api/auth/api-keys?id=${encodeURIComponent(id)}`, {
+        method: "DELETE",
+      });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to mint token");
-      setToken(data.access_token);
-      setExpiresIn(data.expires_in);
+      if (!res.ok) throw new Error(data.error || "Failed to revoke key");
+      if (freshKey) setFreshKey(null);
+      await refreshKeys();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to mint token");
+      setError(err instanceof Error ? err.message : "Failed to revoke key");
     } finally {
       setBusy(false);
     }
@@ -74,12 +122,12 @@ export function OpenAiApiPanel({
   }
 
   const envSnippet = `export OPENAI_BASE_URL=${v1}
-export OPENAI_API_KEY=${token || "<failure_access_token>"}`;
+export OPENAI_API_KEY=${displayKey}`;
 
   const sdkSnippet = `import OpenAI from "openai";
 
 const client = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
+  apiKey: process.env.OPENAI_API_KEY, // fsk_…
   baseURL: "${v1}",
 });
 
@@ -91,7 +139,7 @@ const chat = await client.chat.completions.create({
 console.log(chat.choices[0].message.content);`;
 
   const curlSnippet = `curl ${v1}/chat/completions \\
-  -H "Authorization: Bearer ${token || "$OPENAI_API_KEY"}" \\
+  -H "Authorization: Bearer ${displayKey}" \\
   -H "Content-Type: application/json" \\
   -d '{
     "model": "${sampleModel}",
@@ -101,13 +149,31 @@ console.log(chat.choices[0].message.content);`;
   return (
     <div className="openai-panel">
       <section className="openai-panel__card">
-        <h2 className="openai-panel__h">Base URL</h2>
+        <h2 className="openai-panel__h">Your API key</h2>
         <p className="muted">
-          Point any OpenAI-compatible SDK at Failure. Auth is your Failure
-          access token with the <code>providers</code> scope.
+          Create a persistent <code>fsk_…</code> key and use it as{" "}
+          <code>OPENAI_API_KEY</code> against <code>{v1}</code>. The full key is
+          shown once at creation — Failure only stores a hash.
         </p>
-        <code className="code-block">{v1}</code>
+        <label className="openai-panel__label">
+          <span>Name</span>
+          <input
+            value={keyName}
+            onChange={(e) => setKeyName(e.target.value)}
+            placeholder="Default"
+            maxLength={80}
+            disabled={busy}
+          />
+        </label>
         <div className="hero-cta">
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={createKey}
+            disabled={busy}
+          >
+            {busy ? "Working…" : "Create API key"}
+          </button>
           <button
             type="button"
             className="btn-secondary"
@@ -116,40 +182,49 @@ console.log(chat.choices[0].message.content);`;
             {copied === "base" ? "Copied" : "Copy base URL"}
           </button>
         </div>
-      </section>
-
-      <section className="openai-panel__card">
-        <h2 className="openai-panel__h">Test access token</h2>
-        <p className="muted">
-          Mint a short-lived token for local testing (same JWT your apps get
-          after Sign in with Failure). Expires in about an hour — no refresh
-          token.
-        </p>
-        <div className="hero-cta">
-          <button
-            type="button"
-            className="btn-primary"
-            onClick={mintToken}
-            disabled={busy}
-          >
-            {busy ? "Minting…" : token ? "Mint another token" : "Mint test token"}
-          </button>
-          {token ? (
+        {freshKey ? (
+          <div className="openai-panel__fresh">
+            <p className="form-error" style={{ color: "var(--ember)" }}>
+              Copy this key now — it won’t be shown again.
+            </p>
+            <code className="code-block openai-panel__token">{freshKey}</code>
             <button
               type="button"
               className="btn-secondary"
-              onClick={() => copy("token", token)}
+              onClick={() => copy("fresh", freshKey)}
             >
-              {copied === "token" ? "Copied" : "Copy token"}
+              {copied === "fresh" ? "Copied" : "Copy API key"}
             </button>
-          ) : null}
-        </div>
-        {expiresIn ? (
-          <p className="chat-meta muted">expires_in · {expiresIn}s</p>
+          </div>
         ) : null}
-        {token ? (
-          <code className="code-block openai-panel__token">{token}</code>
-        ) : null}
+        {keys.length ? (
+          <ul className="openai-panel__keys">
+            {keys.map((k) => (
+              <li key={k.id}>
+                <div>
+                  <strong>{k.name}</strong>
+                  <span className="muted">
+                    {" "}
+                    · {k.prefix}
+                    {k.lastUsedAt
+                      ? ` · last used ${new Date(k.lastUsedAt).toLocaleString()}`
+                      : " · never used"}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => revokeKey(k.id)}
+                  disabled={busy}
+                >
+                  Revoke
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="muted">No API keys yet — create one to get started.</p>
+        )}
         {error ? <p className="form-error">{error}</p> : null}
       </section>
 

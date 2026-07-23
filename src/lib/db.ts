@@ -68,6 +68,19 @@ export type PendingProviderFlow = {
   expiresAt: number;
 };
 
+/** Personal API key for OpenAI-compatible /v1 (Bearer fsk_…). */
+export type UserApiKey = {
+  id: string;
+  userId: string;
+  name: string;
+  tokenHash: string;
+  /** Public prefix for UI, e.g. fsk_ab12… */
+  prefix: string;
+  createdAt: string;
+  lastUsedAt?: string;
+  revokedAt?: string | null;
+};
+
 type Database = {
   users: User[];
   clients: OAuthClient[];
@@ -76,6 +89,7 @@ type Database = {
   refreshTokens: RefreshToken[];
   sessions: Session[];
   pendingFlows: PendingProviderFlow[];
+  apiKeys: UserApiKey[];
 };
 
 const emptyDb = (): Database => ({
@@ -86,6 +100,7 @@ const emptyDb = (): Database => ({
   refreshTokens: [],
   sessions: [],
   pendingFlows: [],
+  apiKeys: [],
 });
 
 const STORE_KEY = "failure-oauth:store";
@@ -110,6 +125,9 @@ function isKnownProvider(value: unknown): value is ProviderId {
 
 /** Drop legacy/unknown provider rows (e.g. old Cursor connections). */
 function sanitizeDb(store: Database): { store: Database; changed: boolean } {
+  if (!Array.isArray(store.apiKeys)) {
+    store.apiKeys = [];
+  }
   const beforeConn = store.connections.length;
   const beforeFlows = store.pendingFlows.length;
   store.connections = store.connections.filter((c) =>
@@ -508,6 +526,66 @@ export const db = {
     }
     await mutate((store) => {
       store.pendingFlows = store.pendingFlows.filter((f) => f.id !== id);
+    });
+  },
+
+  async createApiKey(input: {
+    userId: string;
+    name: string;
+    tokenHash: string;
+    prefix: string;
+  }) {
+    return mutate((store) => {
+      if (!store.apiKeys) store.apiKeys = [];
+      const key: UserApiKey = {
+        id: randomUUID(),
+        userId: input.userId,
+        name: input.name.trim() || "Default",
+        tokenHash: input.tokenHash,
+        prefix: input.prefix,
+        createdAt: new Date().toISOString(),
+        revokedAt: null,
+      };
+      store.apiKeys.push(key);
+      return key;
+    });
+  },
+
+  async listApiKeys(userId: string) {
+    const store = await readDb();
+    return (store.apiKeys || [])
+      .filter((k) => k.userId === userId && !k.revokedAt)
+      .map((k) => ({
+        id: k.id,
+        name: k.name,
+        prefix: k.prefix,
+        createdAt: k.createdAt,
+        lastUsedAt: k.lastUsedAt ?? null,
+      }));
+  },
+
+  async findApiKeyByHash(tokenHash: string) {
+    const store = await readDb();
+    return (
+      (store.apiKeys || []).find(
+        (k) => k.tokenHash === tokenHash && !k.revokedAt,
+      ) ?? null
+    );
+  },
+
+  async touchApiKey(id: string) {
+    await mutate((store) => {
+      const key = (store.apiKeys || []).find((k) => k.id === id);
+      if (key) key.lastUsedAt = new Date().toISOString();
+    });
+  },
+
+  async revokeApiKey(id: string, userId: string) {
+    await mutate((store) => {
+      const key = (store.apiKeys || []).find(
+        (k) => k.id === id && k.userId === userId,
+      );
+      if (key) key.revokedAt = new Date().toISOString();
     });
   },
 };

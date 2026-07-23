@@ -21,9 +21,9 @@ export default async function DashboardOpenAiPage() {
         <p className="eyebrow">Dashboard · Integrate</p>
         <h1 className="page-title">OpenAI API</h1>
         <p className="muted">
-          Use Failure as an OpenAI-compatible base URL. Your apps (or a
-          dashboard test token) call <code>/v1/chat/completions</code> with
-          model ids like <code>codex/gpt-5.6-sol</code>.
+          Create a Failure API key (<code>fsk_…</code>), set it as{" "}
+          <code>OPENAI_API_KEY</code>, and point any OpenAI SDK at{" "}
+          <code>/v1</code> with model ids like <code>codex/gpt-5.6-sol</code>.
         </p>
       </section>
       <OpenAiApiPanel

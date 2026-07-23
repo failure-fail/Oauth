@@ -45,7 +45,7 @@ Point any OpenAI SDK at Failure with a user access token (`providers` scope):
 
 ```bash
 export OPENAI_BASE_URL=https://oauth.failure.fail/v1
-export OPENAI_API_KEY=<failure_access_token>
+export OPENAI_API_KEY=fsk_…   # Dashboard → OpenAI API
 ```
 
 Model ids are `provider/model` (e.g. `codex/gpt-5.6-sol`, `kimi/kimi-for-coding`). See INTEGRATION.md § OpenAI-compatible proxy.

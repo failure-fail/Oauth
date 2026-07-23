@@ -245,11 +245,14 @@ If refresh fails for a provider:
 
 Failure exposes a thin **OpenAI Chat Completions** surface so you can point the official OpenAI SDK (or any compatible client) at connected providers.
 
+Auth is a Failure **API key** (`fsk_…` from the dashboard) or an OAuth access
+token with the `providers` scope.
+
 | | |
 |---|---|
 | Base URL | `https://oauth.failure.fail/v1` |
-| Auth | `Authorization: Bearer <failure_access_token>` |
-| Required scope | `providers` |
+| Auth | `Authorization: Bearer <fsk_… or access_token>` |
+| Create key | Dashboard → **OpenAI API** → Create API key |
 | Models | `GET /v1/models` |
 | Chat | `POST /v1/chat/completions` |
 
@@ -271,14 +274,14 @@ Optional header: `X-Failure-Provider: codex` with a bare model id.
 
 ```bash
 export OPENAI_BASE_URL=https://oauth.failure.fail/v1
-export OPENAI_API_KEY=<failure_access_token>
+export OPENAI_API_KEY=fsk_…   # from Dashboard → OpenAI API
 ```
 
 ```js
 import OpenAI from "openai";
 
 const client = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY, // Failure access_token
+  apiKey: process.env.OPENAI_API_KEY, // fsk_…
   baseURL: "https://oauth.failure.fail/v1",
 });
 
