@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { PROVIDERS, type ProviderId } from "@/lib/providers-meta";
 
 type Connection = {
@@ -77,6 +77,7 @@ export function ChatPanel({
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
   const [editImages, setEditImages] = useState<string[]>([]);
+  const busyRef = useRef(false);
   const [messages, setMessages] = useState<Message[]>([
     {
       id: "welcome",
@@ -231,7 +232,8 @@ export function ChatPanel({
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
-    if (!provider || !prompt.trim() || !model || busy) return;
+    if (!provider || !prompt.trim() || !model || busy || busyRef.current) return;
+    busyRef.current = true;
     setBusy(true);
     setError(null);
     const userMsg: Message = {
@@ -340,6 +342,7 @@ export function ChatPanel({
       const message = err instanceof Error ? err.message : "Request failed";
       setError(message);
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   }

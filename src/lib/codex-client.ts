@@ -595,9 +595,9 @@ function extractTextFromResponseObject(response: Record<string, unknown>): strin
   for (const item of (response.output as Array<Record<string, unknown>>) || []) {
     if (item?.type !== "message" || !Array.isArray(item.content)) continue;
     for (const c of item.content as Array<{ text?: string; type?: string }>) {
-      if ((c.type === "output_text" || !c.type || c.text) && c.text) {
-        parts.push(c.text);
-      }
+      // Only assistant visible text — not reasoning / tool payloads.
+      if (c.type && c.type !== "output_text") continue;
+      if (c.text) parts.push(c.text);
     }
   }
   return parts.join("");
@@ -614,19 +614,42 @@ function extractThinkingFromResponseObject(
   }
 }
 
-function uniqueJoin(parts: string[]): string {
-  const joined = parts.join("");
-  if (!joined) return "";
-  // Collapse exact consecutive duplicates (stream deltas + completed payload).
-  const half = Math.floor(joined.length / 2);
-  if (
-    joined.length % 2 === 0 &&
-    half > 0 &&
-    joined.slice(0, half) === joined.slice(half)
-  ) {
-    return joined.slice(0, half);
+/** Collapse exact doubled (or N-repeated) assistant text from SSE mishaps. */
+function collapseRepeatedText(text: string): string {
+  let out = text;
+  for (let i = 0; i < 8 && out.length >= 2; i++) {
+    const half = Math.floor(out.length / 2);
+    if (out.length % 2 === 0 && out.slice(0, half) === out.slice(half)) {
+      out = out.slice(0, half);
+      continue;
+    }
+    break;
   }
-  return joined;
+  return out;
+}
+
+/**
+ * Assemble streamed text chunks.
+ * Handles incremental deltas, cumulative snapshots, consecutive dupes,
+ * and full-stream replays that concatenate the reply twice.
+ */
+function joinTextChunks(parts: string[]): string {
+  const out: string[] = [];
+  for (const part of parts) {
+    if (!part) continue;
+    const soFar = out.join("");
+    if (out.length && out[out.length - 1] === part) continue;
+    if (part === soFar) continue;
+    // Cumulative snapshot: replace soFar with the longer prefix-extending value
+    if (soFar && part.startsWith(soFar) && part.length > soFar.length) {
+      out.length = 0;
+      out.push(part);
+      continue;
+    }
+    if (soFar && soFar.startsWith(part) && part.length < soFar.length) continue;
+    out.push(part);
+  }
+  return collapseRepeatedText(out.join(""));
 }
 
 function parseCodexChatPayload(raw: string): {
@@ -640,6 +663,7 @@ function parseCodexChatPayload(raw: string): {
   const summaryFinal: string[] = [];
   const thinkBlocksArr: ThinkBlock[] = [];
   const reasoningTextChunks: string[] = [];
+  const seenMessageItemIds = new Set<string>();
 
   if (!raw.includes("data:")) {
     try {
@@ -664,7 +688,7 @@ function parseCodexChatPayload(raw: string): {
       .filter(Boolean)
       .join("\n\n");
     return {
-      text: uniqueJoin(finalText) || raw.slice(0, 2000),
+      text: joinTextChunks(finalText) || raw.slice(0, 2000),
       thinkingSummary: blockSummary || reasoningTextChunks.join(""),
       thinkBlocks: thinkBlocksArr,
     };
@@ -676,44 +700,45 @@ function parseCodexChatPayload(raw: string): {
     if (!data || data === "[DONE]") continue;
     try {
       const json = JSON.parse(data) as Record<string, unknown>;
+      const type = typeof json.type === "string" ? json.type : "";
+
       if (
-        json.type === "response.output_text.delta" &&
+        type === "response.output_text.delta" &&
         typeof json.delta === "string"
       ) {
         deltaText.push(json.delta);
       } else if (
-        json.type === "response.output_text.done" &&
+        type === "response.output_text.done" &&
         typeof json.text === "string"
       ) {
         // Full text event — keep as fallback only; deltas already have it.
         if (!deltaText.length) finalText.push(json.text);
-      } else if (typeof json.text === "string" && !json.type) {
+      } else if (!type && typeof json.text === "string") {
         deltaText.push(json.text);
       }
 
       if (
-        json.type === "response.reasoning_summary_text.delta" &&
+        type === "response.reasoning_summary_text.delta" &&
         typeof json.delta === "string"
       ) {
         summaryDeltas.push(json.delta);
       } else if (
-        json.type === "response.reasoning_summary_text.done" &&
+        type === "response.reasoning_summary_text.done" &&
         typeof json.text === "string"
       ) {
         if (!summaryDeltas.length) summaryFinal.push(json.text);
       } else if (
-        json.type === "response.reasoning_summary_part.done" &&
+        type === "response.reasoning_summary_part.done" &&
         typeof json.part === "object" &&
         json.part
       ) {
         const part = json.part as { text?: string };
         if (part.text && !summaryDeltas.length) summaryFinal.push(part.text);
       } else if (
-        json.type === "response.reasoning_summary_part.added" &&
+        type === "response.reasoning_summary_part.added" &&
         typeof json.part === "object" &&
         json.part
       ) {
-        // Ignore added-with-empty; prefer deltas / done to avoid dupes.
         const part = json.part as { text?: string };
         if (part.text && !summaryDeltas.length && !summaryFinal.length) {
           summaryFinal.push(part.text);
@@ -721,21 +746,19 @@ function parseCodexChatPayload(raw: string): {
       }
 
       if (
-        json.type === "response.reasoning_text.delta" &&
+        type === "response.reasoning_text.delta" &&
         typeof json.delta === "string"
       ) {
         reasoningTextChunks.push(json.delta);
       } else if (
-        json.type === "response.reasoning_text.done" &&
+        type === "response.reasoning_text.done" &&
         typeof json.text === "string"
       ) {
         if (!reasoningTextChunks.length) reasoningTextChunks.push(json.text);
       }
 
-      if (
-        json.type === "response.output_item.done" ||
-        json.type === "response.output_item.added"
-      ) {
+      // Only *done* message items — *added* often repeats the same content later.
+      if (type === "response.output_item.done") {
         const item = json.item as Record<string, unknown> | undefined;
         if (item?.type === "reasoning") {
           pushThinkBlock(thinkBlocksArr, item, "reasoning");
@@ -745,31 +768,54 @@ function parseCodexChatPayload(raw: string): {
           Array.isArray(item.content) &&
           !deltaText.length
         ) {
-          for (const c of item.content as Array<{ text?: string }>) {
-            if (c.text) finalText.push(c.text);
+          const itemId =
+            typeof item.id === "string"
+              ? item.id
+              : `msg-${seenMessageItemIds.size}`;
+          if (!seenMessageItemIds.has(itemId)) {
+            seenMessageItemIds.add(itemId);
+            for (const c of item.content as Array<{
+              text?: string;
+              type?: string;
+            }>) {
+              if (c.type && c.type !== "output_text") continue;
+              if (c.text) finalText.push(c.text);
+            }
           }
         }
+      } else if (type === "response.output_item.added") {
+        const item = json.item as Record<string, unknown> | undefined;
+        if (item?.type === "reasoning") {
+          pushThinkBlock(thinkBlocksArr, item, "reasoning");
+        }
+        // Do not take message text from *added* — *done* / deltas are authoritative.
       }
 
-      if (json.type === "response.completed") {
+      if (type === "response.completed") {
         const response = json.response as Record<string, unknown> | undefined;
         if (response) {
           extractThinkingFromResponseObject(response, thinkBlocksArr);
-          // Only use completed text if we never got streaming deltas.
-          if (!deltaText.length) {
+          // Only use completed text if we never got streaming deltas / items.
+          if (!deltaText.length && !finalText.length) {
             const completed = extractTextFromResponseObject(response);
             if (completed) finalText.push(completed);
           }
         }
       }
 
-      const choices = json.choices as
-        | Array<{ delta?: { content?: string }; message?: { content?: string } }>
-        | undefined;
-      if (choices?.[0]?.delta?.content) {
-        deltaText.push(choices[0].delta.content);
-      } else if (choices?.[0]?.message?.content && !deltaText.length) {
-        finalText.push(choices[0].message.content);
+      // Chat Completions-shaped events only — never mix into Responses streams.
+      if (!type.startsWith("response.")) {
+        const choices = json.choices as
+          | Array<{
+              delta?: { content?: string };
+              message?: { content?: string };
+            }>
+          | undefined;
+        if (choices?.[0]?.delta?.content) {
+          deltaText.push(choices[0].delta.content);
+        } else if (choices?.[0]?.message?.content && !deltaText.length) {
+          finalText.push(choices[0].message.content);
+        }
       }
     } catch {
       // ignore malformed SSE chunks
@@ -781,7 +827,7 @@ function parseCodexChatPayload(raw: string): {
       thinkBlocksArr,
       {
         type: "reasoning",
-        content: reasoningTextChunks.join(""),
+        content: joinTextChunks(reasoningTextChunks),
       },
       "reasoning",
     );
@@ -793,15 +839,15 @@ function parseCodexChatPayload(raw: string): {
     .join("\n\n");
   const thinkingSummary =
     blockSummary ||
-    uniqueJoin(summaryDeltas) ||
-    uniqueJoin(summaryFinal) ||
+    joinTextChunks(summaryDeltas) ||
+    joinTextChunks(summaryFinal) ||
     reasoningTextChunks.join("") ||
     "";
 
   return {
     text:
-      uniqueJoin(deltaText) ||
-      uniqueJoin(finalText) ||
+      joinTextChunks(deltaText) ||
+      joinTextChunks(finalText) ||
       raw.slice(0, 2000),
     thinkingSummary,
     thinkBlocks: thinkBlocksArr,
