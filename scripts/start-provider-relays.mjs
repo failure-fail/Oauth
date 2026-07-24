@@ -4,6 +4,9 @@
  * live URLs into Cloudflare KV so the Worker can reach Codex/Kimi without a
  * redeploy when the trycloudflare hostname rotates.
  *
+ * Continuously pings the public tunnel. On CF 1016/1033 / timeouts / bad
+ * healthz, kills cloudflared, starts a fresh quick tunnel, and re-publishes KV.
+ *
  * Requires:
  *   - CLOUDFLARE_API_TOKEN (or wrangler auth)
  *   - /tmp/cloudflared or `cloudflared` on PATH
@@ -11,6 +14,13 @@
  *
  * Usage:
  *   node scripts/start-provider-relays.mjs
+ *   # or: pnpm relay:providers
+ *
+ * Env:
+ *   PORT                 local relay port (default 8787)
+ *   PING_INTERVAL_MS     public tunnel ping interval (default 15000)
+ *   PING_FAILS_BEFORE_REFRESH  consecutive failures before refresh (default 2)
+ *   LOCAL_PING_INTERVAL_MS     local relay check (default 5000)
  */
 import { spawn } from "node:child_process";
 import { createWriteStream, existsSync } from "node:fs";
@@ -23,14 +33,57 @@ const CLOUDFLARED =
   process.env.CLOUDFLARED_BIN ||
   (existsSync("/tmp/cloudflared") ? "/tmp/cloudflared" : "cloudflared");
 const ROOT = new URL("..", import.meta.url).pathname;
+const PING_INTERVAL_MS = Number(process.env.PING_INTERVAL_MS || 15_000);
+const PING_FAILS_BEFORE_REFRESH = Number(
+  process.env.PING_FAILS_BEFORE_REFRESH || 2,
+);
+const LOCAL_PING_INTERVAL_MS = Number(
+  process.env.LOCAL_PING_INTERVAL_MS || 5_000,
+);
+const TUNNEL_URL_TIMEOUT_MS = Number(
+  process.env.TUNNEL_URL_TIMEOUT_MS || 90_000,
+);
+
+const state = {
+  relay: null,
+  tunnel: null,
+  currentUrl: null,
+  consecutiveFails: 0,
+  refreshing: false,
+  lastOkAt: null,
+  lastFailReason: null,
+  publishedAt: null,
+};
+
+function log(...args) {
+  console.log(new Date().toISOString(), ...args);
+}
 
 function run(cmd, args, opts = {}) {
-  const child = spawn(cmd, args, {
+  return spawn(cmd, args, {
     cwd: ROOT,
     stdio: opts.stdio || ["ignore", "pipe", "pipe"],
     env: { ...process.env, ...(opts.env || {}) },
   });
-  return child;
+}
+
+function killTree(child, label) {
+  if (!child || child.killed || child.exitCode != null) return;
+  try {
+    child.kill("SIGTERM");
+  } catch {
+    // ignore
+  }
+  setTimeout(() => {
+    if (child.exitCode == null && !child.killed) {
+      try {
+        child.kill("SIGKILL");
+        log(`force-killed ${label}`);
+      } catch {
+        // ignore
+      }
+    }
+  }, 2500);
 }
 
 async function kvPut(key, value) {
@@ -60,14 +113,16 @@ async function kvPut(key, value) {
       else reject(new Error(err || `kv put failed (${code})`));
     });
   });
-  console.log(`KV ${key} = ${value}`);
+  log(`KV ${key} = ${value}`);
 }
 
-async function waitForHealth(timeoutMs = 15000) {
+async function waitForLocalHealth(timeoutMs = 15000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     try {
-      const res = await fetch(`http://127.0.0.1:${PORT}/healthz`);
+      const res = await fetch(`http://127.0.0.1:${PORT}/healthz`, {
+        signal: AbortSignal.timeout(2000),
+      });
       if (res.ok) return true;
     } catch {
       // retry
@@ -78,43 +133,43 @@ async function waitForHealth(timeoutMs = 15000) {
 }
 
 function startRelay() {
-  console.log(`Starting provider-relay on :${PORT}`);
+  log(`Starting provider-relay on :${PORT}`);
   const child = run("node", ["scripts/provider-relay.mjs"], {
     env: { PORT: String(PORT) },
   });
   child.stdout.on("data", (d) => process.stdout.write(`[relay] ${d}`));
   child.stderr.on("data", (d) => process.stderr.write(`[relay] ${d}`));
-  child.on("exit", (code) => {
-    console.error(`relay exited (${code})`);
+  child.on("exit", (code, signal) => {
+    log(`relay exited (code=${code} signal=${signal})`);
   });
   return child;
 }
 
 function startTunnel() {
   const logPath = "/tmp/failure-provider-tunnel.log";
-  const log = createWriteStream(logPath, { flags: "a" });
-  console.log(`Starting cloudflared → :${PORT} (log ${logPath})`);
+  const logStream = createWriteStream(logPath, { flags: "a" });
+  log(`Starting cloudflared → :${PORT} (log ${logPath})`);
   const child = run(CLOUDFLARED, [
     "tunnel",
     "--url",
     `http://127.0.0.1:${PORT}`,
     "--no-autoupdate",
   ]);
-  let url = null;
+  let announced = false;
   const onData = (buf) => {
     const text = buf.toString();
-    log.write(text);
+    logStream.write(text);
     process.stdout.write(`[tunnel] ${text}`);
     const match = text.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/);
-    if (match && !url) {
-      url = match[0];
-      child.emit("tunnel-url", url);
+    if (match && !announced) {
+      announced = true;
+      child.emit("tunnel-url", match[0]);
     }
   };
   child.stdout.on("data", onData);
   child.stderr.on("data", onData);
-  child.on("exit", (code) => {
-    console.error(`tunnel exited (${code})`);
+  child.on("exit", (code, signal) => {
+    log(`tunnel exited (code=${code} signal=${signal})`);
   });
   return child;
 }
@@ -124,60 +179,267 @@ async function publish(url) {
   await kvPut("failure-oauth:relay:codex", `${base}/codex`);
   await kvPut("failure-oauth:relay:kimi", `${base}/kimi`);
   await kvPut("failure-oauth:relay:root", base);
-  console.log("Relay URLs published to KV. Worker will pick them up on next request.");
+  state.publishedAt = Date.now();
+  log("Relay URLs published to KV. Worker picks them up on next request.");
+}
+
+function isCloudflareEdgeDead(status, body) {
+  if (status === 530 || status === 502 || status === 503 || status === 504) {
+    return true;
+  }
+  return /error code:\s*(1016|1033|1000|1001|1020)/i.test(body || "");
+}
+
+/**
+ * Ping public tunnel healthz (and confirm JSON ok).
+ * Returns { ok, reason, status? }.
+ */
+async function pingPublicTunnel(url) {
+  if (!url) return { ok: false, reason: "no_url" };
+  const healthz = `${url.replace(/\/$/, "")}/healthz`;
+  try {
+    const res = await fetch(healthz, {
+      signal: AbortSignal.timeout(10_000),
+      headers: { Accept: "application/json" },
+    });
+    const text = await res.text();
+    if (!res.ok || isCloudflareEdgeDead(res.status, text)) {
+      return {
+        ok: false,
+        reason: `http_${res.status}:${text.slice(0, 80).replace(/\s+/g, " ")}`,
+        status: res.status,
+      };
+    }
+    let json = null;
+    try {
+      json = JSON.parse(text);
+    } catch {
+      return { ok: false, reason: "non_json_healthz", status: res.status };
+    }
+    if (!json?.ok) {
+      return { ok: false, reason: "healthz_not_ok", status: res.status };
+    }
+    return { ok: true, status: res.status };
+  } catch (error) {
+    return {
+      ok: false,
+      reason: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+async function ensureRelay() {
+  if (state.relay && state.relay.exitCode == null) {
+    try {
+      const res = await fetch(`http://127.0.0.1:${PORT}/healthz`, {
+        signal: AbortSignal.timeout(2000),
+      });
+      if (res.ok) return;
+    } catch {
+      // fall through to restart
+    }
+    log("Local relay unhealthy — restarting");
+    killTree(state.relay, "relay");
+    state.relay = null;
+    await sleep(500);
+  } else if (state.relay) {
+    state.relay = null;
+  }
+  state.relay = startRelay();
+  if (!(await waitForLocalHealth())) {
+    throw new Error("Relay failed to become healthy");
+  }
+}
+
+async function waitForTunnelUrl(child, timeoutMs = TUNNEL_URL_TIMEOUT_MS) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      child.off("tunnel-url", onUrl);
+      reject(new Error(`Timed out waiting for trycloudflare URL (${timeoutMs}ms)`));
+    }, timeoutMs);
+    const onUrl = (url) => {
+      clearTimeout(timer);
+      resolve(url);
+    };
+    child.once("tunnel-url", onUrl);
+    child.once("exit", (code) => {
+      clearTimeout(timer);
+      reject(new Error(`Tunnel exited before URL (code=${code})`));
+    });
+  });
+}
+
+async function refreshTunnel(reason) {
+  if (state.refreshing) {
+    log(`Refresh already in progress (skip: ${reason})`);
+    return;
+  }
+  state.refreshing = true;
+  log(`Refreshing tunnel — ${reason}`);
+  try {
+    await ensureRelay();
+
+    if (state.tunnel) {
+      killTree(state.tunnel, "tunnel");
+      state.tunnel = null;
+      await sleep(800);
+    }
+
+    state.currentUrl = null;
+    state.consecutiveFails = 0;
+    state.tunnel = startTunnel();
+
+    const url = await waitForTunnelUrl(state.tunnel);
+    // Wait briefly for edge to become reachable
+    let ok = false;
+    let last = null;
+    for (let i = 0; i < 12; i++) {
+      await sleep(1500);
+      last = await pingPublicTunnel(url);
+      if (last.ok) {
+        ok = true;
+        break;
+      }
+      log(`Tunnel warm-up ping failed (${i + 1}/12): ${last.reason}`);
+    }
+    if (!ok) {
+      throw new Error(
+        `New tunnel not healthy after warm-up: ${last?.reason || "unknown"}`,
+      );
+    }
+
+    state.currentUrl = url;
+    state.lastOkAt = Date.now();
+    state.lastFailReason = null;
+    await publish(url);
+    log(`Tunnel ready: ${url}`);
+  } finally {
+    state.refreshing = false;
+  }
+}
+
+async function pingLoop() {
+  for (;;) {
+    try {
+      if (state.refreshing) {
+        await sleep(PING_INTERVAL_MS);
+        continue;
+      }
+
+      // Process died → refresh immediately
+      if (!state.tunnel || state.tunnel.exitCode != null) {
+        await refreshTunnel("tunnel process exited");
+        await sleep(PING_INTERVAL_MS);
+        continue;
+      }
+
+      if (!state.currentUrl) {
+        await refreshTunnel("missing public URL");
+        await sleep(PING_INTERVAL_MS);
+        continue;
+      }
+
+      const result = await pingPublicTunnel(state.currentUrl);
+      if (result.ok) {
+        if (state.consecutiveFails > 0) {
+          log(`Tunnel recovered after ${state.consecutiveFails} fail(s)`);
+        }
+        state.consecutiveFails = 0;
+        state.lastOkAt = Date.now();
+        state.lastFailReason = null;
+      } else {
+        state.consecutiveFails += 1;
+        state.lastFailReason = result.reason;
+        log(
+          `Tunnel ping FAIL ${state.consecutiveFails}/${PING_FAILS_BEFORE_REFRESH}: ${result.reason}`,
+        );
+        if (state.consecutiveFails >= PING_FAILS_BEFORE_REFRESH) {
+          await refreshTunnel(`ping failed: ${result.reason}`);
+        }
+      }
+    } catch (error) {
+      log(
+        "Ping loop error:",
+        error instanceof Error ? error.message : String(error),
+      );
+      try {
+        await refreshTunnel(
+          `ping loop error: ${error instanceof Error ? error.message : error}`,
+        );
+      } catch (refreshError) {
+        log(
+          "Refresh failed:",
+          refreshError instanceof Error
+            ? refreshError.message
+            : String(refreshError),
+        );
+      }
+    }
+    await sleep(PING_INTERVAL_MS);
+  }
+}
+
+async function localWatchLoop() {
+  for (;;) {
+    try {
+      if (!state.refreshing) {
+        if (!state.relay || state.relay.exitCode != null) {
+          log("Relay process missing — restarting");
+          await ensureRelay();
+        } else {
+          const res = await fetch(`http://127.0.0.1:${PORT}/healthz`, {
+            signal: AbortSignal.timeout(2000),
+          }).catch(() => null);
+          if (!res?.ok) {
+            log("Local relay ping failed — restarting relay");
+            killTree(state.relay, "relay");
+            state.relay = null;
+            await ensureRelay();
+          }
+        }
+      }
+    } catch (error) {
+      log(
+        "Local watch error:",
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+    await sleep(LOCAL_PING_INTERVAL_MS);
+  }
+}
+
+async function statusLoop() {
+  for (;;) {
+    await sleep(60_000);
+    const age = state.lastOkAt
+      ? `${Math.round((Date.now() - state.lastOkAt) / 1000)}s ago`
+      : "never";
+    log(
+      `status url=${state.currentUrl || "none"} fails=${state.consecutiveFails} lastOk=${age} refreshing=${state.refreshing}${
+        state.lastFailReason ? ` lastFail=${state.lastFailReason}` : ""
+      }`,
+    );
+  }
 }
 
 async function main() {
-  let relay = startRelay();
-  if (!(await waitForHealth())) {
-    console.error("Relay failed to become healthy");
-    process.exit(1);
-  }
+  await ensureRelay();
+  await refreshTunnel("startup");
+  log(
+    `Supervisor running — ping every ${PING_INTERVAL_MS}ms, refresh after ${PING_FAILS_BEFORE_REFRESH} fails. Ctrl+C to stop.`,
+  );
+  void pingLoop();
+  void localWatchLoop();
+  void statusLoop();
+}
 
-  let tunnel = startTunnel();
-  let currentUrl = null;
-
-  const onUrl = async (url) => {
-    if (url === currentUrl) return;
-    currentUrl = url;
-    try {
-      await publish(url);
-    } catch (error) {
-      console.error("Failed to publish relay URLs:", error);
-    }
-  };
-  tunnel.on("tunnel-url", (url) => {
-    void onUrl(url);
+for (const sig of ["SIGINT", "SIGTERM"]) {
+  process.on(sig, () => {
+    log(`Caught ${sig}, shutting down…`);
+    killTree(state.tunnel, "tunnel");
+    killTree(state.relay, "relay");
+    process.exit(0);
   });
-
-  // Supervise: restart crashed processes
-  setInterval(() => {
-    if (relay.exitCode != null) {
-      console.log("Restarting relay…");
-      relay = startRelay();
-    }
-    if (tunnel.exitCode != null) {
-      console.log("Restarting tunnel…");
-      currentUrl = null;
-      tunnel = startTunnel();
-      tunnel.on("tunnel-url", (url) => {
-        void onUrl(url);
-      });
-    }
-  }, 5000);
-
-  // Periodic health publish / re-check
-  setInterval(async () => {
-    if (!currentUrl) return;
-    try {
-      const res = await fetch(`${currentUrl}/healthz`, { signal: AbortSignal.timeout(8000) });
-      if (!res.ok) console.warn("Public tunnel health check failed", res.status);
-    } catch (error) {
-      console.warn("Public tunnel unreachable:", error instanceof Error ? error.message : error);
-    }
-  }, 60000);
-
-  console.log("Provider relay supervisor running. Ctrl+C to stop.");
 }
 
 main().catch((error) => {
