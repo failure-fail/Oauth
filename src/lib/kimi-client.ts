@@ -1,5 +1,6 @@
 import { randomUUID } from "crypto";
 import { KIMI_OAUTH } from "./config";
+import { toOpenAiUserContent, type ChatImage } from "./chat-images";
 import type { StoredProviderSecret } from "./providers";
 import type { ProviderModel } from "./codex-client";
 import { resolveKimiRelayBase } from "./relay-config";
@@ -376,6 +377,7 @@ export async function chatKimi(
   secret: StoredProviderSecret,
   prompt: string,
   model?: string,
+  options?: { images?: ChatImage[] },
 ) {
   const token = secret.accessToken;
   if (!token) throw new Error("Kimi access token missing");
@@ -397,7 +399,12 @@ export async function chatKimi(
     body: JSON.stringify({
       stream: true,
       model: selected,
-      messages: [{ role: "user", content: prompt }],
+      messages: [
+        {
+          role: "user",
+          content: toOpenAiUserContent(prompt, options?.images),
+        },
+      ],
     }),
   });
   if (!res.ok) {

@@ -1,4 +1,5 @@
 import { CODEX_OAUTH } from "./config";
+import { toCodexUserContent, type ChatImage } from "./chat-images";
 import {
   chatgptAccountIdFromToken,
   chatgptIsFedRampFromToken,
@@ -394,12 +395,12 @@ function pickModelIds(payload: unknown): ProviderModel[] {
   return models;
 }
 
-function userInputList(prompt: string) {
+function userInputList(prompt: string, images?: ChatImage[]) {
   return [
     {
       type: "message",
       role: "user",
-      content: [{ type: "input_text", text: prompt }],
+      content: toCodexUserContent(prompt, images),
     },
   ];
 }
@@ -890,6 +891,7 @@ export async function chatCodex(
     thinkingLevel?: ThinkingLevel;
     includeThinking?: boolean;
     flavor?: OpenAiChatFlavor;
+    images?: ChatImage[];
   },
 ) {
   const flavor = options?.flavor || "codex";
@@ -915,7 +917,7 @@ export async function chatCodex(
   const body: Record<string, unknown> = {
     model: selected,
     instructions: "You are a helpful assistant used to test Failure AI OAuth.",
-    input: userInputList(prompt),
+    input: userInputList(prompt, options?.images),
     store: false,
     stream: true,
     include: ["reasoning.encrypted_content"],

@@ -1,5 +1,6 @@
 import { createHash, createPrivateKey, createPublicKey, diffieHellman, generateKeyPairSync, createDecipheriv, randomBytes } from "crypto";
 import { MIMO_API } from "./config";
+import { toOpenAiUserContent, type ChatImage } from "./chat-images";
 import type { StoredProviderSecret } from "./providers";
 import type { ProviderModel, ThinkingLevel, ThinkingPayload } from "./codex-client";
 
@@ -229,6 +230,7 @@ export async function chatMimo(
   options?: {
     thinkingLevel?: ThinkingLevel;
     includeThinking?: boolean;
+    images?: ChatImage[];
   },
 ) {
   const listed = await listMimoModels(secret);
@@ -248,7 +250,10 @@ export async function chatMimo(
         role: "system",
         content: "You are MiMo, an AI assistant developed by Xiaomi.",
       },
-      { role: "user", content: prompt },
+      {
+        role: "user",
+        content: toOpenAiUserContent(prompt, options?.images),
+      },
     ],
     max_completion_tokens: 2048,
     temperature: 1,

@@ -48,7 +48,7 @@ export OPENAI_BASE_URL=https://oauth.failure.fail/v1
 export OPENAI_API_KEY=fsk_…   # Dashboard → OpenAI API
 ```
 
-Model ids are `provider/model` (e.g. `codex/gpt-5.6-sol`, `kimi/kimi-for-coding`). See INTEGRATION.md § OpenAI-compatible proxy.
+Model ids are `provider/model` (e.g. `codex/gpt-5.6-sol`, `kimi/kimi-for-coding`). Multimodal user messages with OpenAI `image_url` content parts are supported (https or `data:image/…`). See INTEGRATION.md § OpenAI-compatible proxy.
 
 Quick path:
 

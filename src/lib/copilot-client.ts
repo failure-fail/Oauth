@@ -1,4 +1,5 @@
 import { COPILOT_OAUTH } from "./config";
+import { toOpenAiUserContent, type ChatImage } from "./chat-images";
 import type { StoredProviderSecret } from "./providers";
 import type { ProviderModel } from "./codex-client";
 
@@ -274,6 +275,7 @@ export async function chatCopilot(
   secret: StoredProviderSecret,
   prompt: string,
   model?: string,
+  options?: { images?: ChatImage[] },
 ) {
   const token = secret.accessToken;
   if (!token) throw new Error("Copilot session token missing");
@@ -298,7 +300,12 @@ export async function chatCopilot(
     body: JSON.stringify({
       stream: true,
       model: selected,
-      messages: [{ role: "user", content: prompt }],
+      messages: [
+        {
+          role: "user",
+          content: toOpenAiUserContent(prompt, options?.images),
+        },
+      ],
     }),
   });
   if (!res.ok) {

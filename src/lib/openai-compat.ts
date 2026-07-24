@@ -3,13 +3,24 @@ import { db } from "./db";
 import { verifyAccessToken } from "./oauth-server";
 import { PROVIDERS, type ProviderId } from "./providers-meta";
 import { listProviderModels, runProviderChat } from "./chat";
+import {
+  assertImageLimit,
+  normalizeChatImage,
+  type ChatImage,
+} from "./chat-images";
 import type { ThinkingLevel } from "./codex-client";
 
 const PROVIDER_IDS = new Set(PROVIDERS.map((p) => p.id));
 
+export type OpenAiContentPart = {
+  type?: string;
+  text?: string;
+  image_url?: string | { url?: string; detail?: string };
+};
+
 export type OpenAiMessage = {
   role: string;
-  content?: string | Array<{ type?: string; text?: string }>;
+  content?: string | OpenAiContentPart[] | null;
   name?: string;
 };
 
@@ -158,9 +169,7 @@ export async function requireFailureBearer(req: Request): Promise<{
   }
 }
 
-function contentToText(
-  content: OpenAiMessage["content"],
-): string {
+function contentToText(content: OpenAiMessage["content"]): string {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
   return content
@@ -173,39 +182,83 @@ function contentToText(
     .join("\n");
 }
 
-/** Flatten OpenAI messages into a single prompt for provider clients. */
-export function flattenOpenAiMessages(messages: OpenAiMessage[]): string {
+function contentToImages(content: OpenAiMessage["content"]): ChatImage[] {
+  if (!Array.isArray(content)) return [];
+  const images: ChatImage[] = [];
+  for (const part of content) {
+    const image = normalizeChatImage(part);
+    if (image) images.push(image);
+  }
+  return images;
+}
+
+export type FlattenedOpenAiPrompt = {
+  prompt: string;
+  images: ChatImage[];
+};
+
+/** Flatten OpenAI messages into a prompt + optional image_url attachments. */
+export function flattenOpenAiMessages(
+  messages: OpenAiMessage[],
+): FlattenedOpenAiPrompt {
   if (!Array.isArray(messages) || !messages.length) {
     throw new OpenAiCompatError(400, "messages must be a non-empty array");
   }
   const systems: string[] = [];
   const turns: string[] = [];
+  const images: ChatImage[] = [];
   for (const msg of messages) {
-    const text = contentToText(msg.content).trim();
-    if (!text) continue;
     const role = (msg.role || "user").toLowerCase();
+    const text = contentToText(msg.content).trim();
+    const msgImages = contentToImages(msg.content);
+    if (msgImages.length) {
+      if (role !== "user") {
+        throw new OpenAiCompatError(
+          400,
+          "image_url content parts are only supported on user messages",
+        );
+      }
+      images.push(...msgImages);
+    }
+    if (!text && !msgImages.length) continue;
     if (role === "system" || role === "developer") {
-      systems.push(text);
+      if (text) systems.push(text);
     } else if (role === "assistant") {
-      turns.push(`Assistant: ${text}`);
+      if (text) turns.push(`Assistant: ${text}`);
     } else if (role === "tool" || role === "function") {
-      turns.push(`Tool${msg.name ? ` (${msg.name})` : ""}: ${text}`);
-    } else {
+      if (text) turns.push(`Tool${msg.name ? ` (${msg.name})` : ""}: ${text}`);
+    } else if (text) {
       turns.push(`User: ${text}`);
     }
   }
-  if (!turns.length && !systems.length) {
-    throw new OpenAiCompatError(400, "messages contained no text content");
+  try {
+    assertImageLimit(images);
+  } catch (error) {
+    throw new OpenAiCompatError(
+      400,
+      error instanceof Error ? error.message : "Too many images",
+    );
+  }
+  if (!turns.length && !systems.length && !images.length) {
+    throw new OpenAiCompatError(
+      400,
+      "messages contained no text or image_url content",
+    );
   }
   // Single user message with optional system — keep it simple for providers.
+  let prompt = "";
   if (turns.length === 1 && turns[0].startsWith("User: ") && !systems.length) {
-    return turns[0].slice("User: ".length);
+    prompt = turns[0].slice("User: ".length);
+  } else {
+    const body = turns.join("\n\n");
+    prompt = systems.length
+      ? `System:\n${systems.join("\n\n")}\n\n${body}`.trim()
+      : body;
   }
-  const body = turns.join("\n\n");
-  if (systems.length) {
-    return `System:\n${systems.join("\n\n")}\n\n${body}`.trim();
+  if (!prompt.trim() && images.length) {
+    prompt = "Describe the attached image(s).";
   }
-  return body;
+  return { prompt, images };
 }
 
 export function parseModelRef(
@@ -327,11 +380,12 @@ export async function runOpenAiChat(input: {
       { code: "provider_not_connected" },
     );
   }
-  const prompt = flattenOpenAiMessages(input.messages);
+  const { prompt, images } = flattenOpenAiMessages(input.messages);
   const result = await runProviderChat({
     provider,
     connection: conn,
     prompt,
+    images,
     model,
     thinkingLevel: input.thinkingLevel,
     includeThinking: true,

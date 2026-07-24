@@ -23,6 +23,15 @@ const messageSchema = z.object({
         z.object({
           type: z.string().optional(),
           text: z.string().optional(),
+          image_url: z
+            .union([
+              z.string(),
+              z.object({
+                url: z.string().min(1),
+                detail: z.enum(["auto", "low", "high"]).optional(),
+              }),
+            ])
+            .optional(),
         }),
       ),
       z.null(),
