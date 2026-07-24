@@ -1,0 +1,33 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "failure-oauth",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2026-07-22",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  "services": [
+    {
+      "binding": "WORKER_SELF_REFERENCE",
+      "service": "failure-oauth"
+    }
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "FAILURE_KV",
+      "id": "cf4106dc63c04e379e93f2252d5a367a"
+    }
+  ],
+  "routes": [
+    {
+      "pattern": "oauth.failure.fail",
+      "custom_domain": true
+    }
+  ],
+  "vars": {
+    "FAILURE_OAUTH_BASE_URL": "https://oauth.failure.fail",
+    "FAILURE_OAUTH_ISSUER": "https://oauth.failure.fail"
+  }
+}
