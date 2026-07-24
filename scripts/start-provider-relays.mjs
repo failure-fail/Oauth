@@ -53,6 +53,7 @@ const state = {
   lastOkAt: null,
   lastFailReason: null,
   publishedAt: null,
+  lastRefreshAt: 0,
 };
 
 function log(...args) {
@@ -221,10 +222,17 @@ async function pingPublicTunnel(url) {
     }
     return { ok: true, status: res.status };
   } catch (error) {
-    return {
-      ok: false,
-      reason: error instanceof Error ? error.message : String(error),
-    };
+    const cause =
+      error && typeof error === "object" && "cause" in error
+        ? error.cause
+        : null;
+    const detail = [
+      error instanceof Error ? error.message : String(error),
+      cause instanceof Error ? cause.message : cause ? String(cause) : null,
+    ]
+      .filter(Boolean)
+      .join(": ");
+    return { ok: false, reason: detail || "fetch_failed" };
   }
 }
 
@@ -274,7 +282,16 @@ async function refreshTunnel(reason) {
     log(`Refresh already in progress (skip: ${reason})`);
     return;
   }
+  const since = Date.now() - state.lastRefreshAt;
+  const minGap = Number(process.env.REFRESH_COOLDOWN_MS || 20_000);
+  if (state.lastRefreshAt && since < minGap && reason !== "startup") {
+    log(
+      `Refresh cooldown (${Math.round((minGap - since) / 1000)}s left) — skip: ${reason}`,
+    );
+    return;
+  }
   state.refreshing = true;
+  state.lastRefreshAt = Date.now();
   log(`Refreshing tunnel — ${reason}`);
   try {
     await ensureRelay();
@@ -290,29 +307,34 @@ async function refreshTunnel(reason) {
     state.tunnel = startTunnel();
 
     const url = await waitForTunnelUrl(state.tunnel);
-    // Wait briefly for edge to become reachable
+    // Edge DNS / routing can lag after quick-tunnel creation.
     let ok = false;
     let last = null;
-    for (let i = 0; i < 12; i++) {
-      await sleep(1500);
+    const warmAttempts = Number(process.env.TUNNEL_WARM_ATTEMPTS || 30);
+    for (let i = 0; i < warmAttempts; i++) {
+      await sleep(i < 5 ? 1000 : 2000);
       last = await pingPublicTunnel(url);
       if (last.ok) {
         ok = true;
         break;
       }
-      log(`Tunnel warm-up ping failed (${i + 1}/12): ${last.reason}`);
-    }
-    if (!ok) {
-      throw new Error(
-        `New tunnel not healthy after warm-up: ${last?.reason || "unknown"}`,
+      log(
+        `Tunnel warm-up ping failed (${i + 1}/${warmAttempts}): ${last.reason}`,
       );
     }
 
+    // Publish even if warm-up is flaky — ping loop will refresh again if needed.
     state.currentUrl = url;
-    state.lastOkAt = Date.now();
-    state.lastFailReason = null;
+    state.lastFailReason = ok ? null : last?.reason || "warm_up_failed";
+    if (ok) state.lastOkAt = Date.now();
     await publish(url);
-    log(`Tunnel ready: ${url}`);
+    if (!ok) {
+      log(
+        `Tunnel published but not yet healthy (${last?.reason}). Ping loop will refresh if it stays down.`,
+      );
+    } else {
+      log(`Tunnel ready: ${url}`);
+    }
   } finally {
     state.refreshing = false;
   }
@@ -423,8 +445,20 @@ async function statusLoop() {
 }
 
 async function main() {
-  await ensureRelay();
-  await refreshTunnel("startup");
+  // Never exit on a bad first tunnel — keep refreshing until one sticks.
+  for (;;) {
+    try {
+      await ensureRelay();
+      await refreshTunnel("startup");
+      break;
+    } catch (error) {
+      log(
+        "Startup refresh failed, retrying in 5s:",
+        error instanceof Error ? error.message : String(error),
+      );
+      await sleep(5000);
+    }
+  }
   log(
     `Supervisor running — ping every ${PING_INTERVAL_MS}ms, refresh after ${PING_FAILS_BEFORE_REFRESH} fails. Ctrl+C to stop.`,
   );
