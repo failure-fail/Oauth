@@ -86,19 +86,13 @@ UserInfo (with `providers` scope) returns linked credential packages:
 
 ### Cloudflare Workers note
 
-`chatgpt.com` blocks Cloudflare Worker egress for Codex. For production Codex chat/models/images from Workers, run the included relay and set `FAILURE_CODEX_BASE_URL`:
+`chatgpt.com` and `api.kimi.com/coding` block Cloudflare Worker egress. Run the unified Node relay + cloudflared supervisor; it publishes live tunnel URLs into KV (`failure-oauth:relay:codex` / `failure-oauth:relay:kimi`) so hostname rotations do not need a Worker redeploy:
 
 ```bash
-pnpm relay:codex
+pnpm relay:providers
 ```
 
-`api.kimi.com/coding` is also CF-challenged from Worker egress (OAuth on `auth.kimi.com` still works). For Kimi chat/models from Workers, run:
-
-```bash
-pnpm relay:kimi
-```
-
-Then set `FAILURE_KIMI_BASE_URL` to that relay URL (same pattern as Codex).
+Optional local overrides: `FAILURE_CODEX_BASE_URL` / `FAILURE_KIMI_BASE_URL` (used only when KV has no relay URL).
 ## Security notes
 
 - Provider secrets are encrypted at rest (AES-256-GCM).

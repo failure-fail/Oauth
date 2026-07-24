@@ -14,6 +14,7 @@ import { encryptSecret, decryptSecret, pkceChallengeFromVerifier } from "./crypt
 import { db, type ProviderConnection } from "./db";
 import { antigravityCredentialEndpoints, listAntigravityModels } from "./antigravity-client";
 import { listCodexModels } from "./codex-client";
+import { resolveCodexRelayBase } from "./relay-config";
 import {
   copilotCredentialEndpoints,
   exchangeCopilotSession,
@@ -382,7 +383,7 @@ export async function exposeProviderCredentials(
 ) {
   switch (provider) {
     case "codex": {
-      const relay = process.env.FAILURE_CODEX_BASE_URL?.trim().replace(/\/$/, "");
+      const relay = await resolveCodexRelayBase();
       const base = relay || CODEX_OAUTH.baseUrl;
       let models: Awaited<ReturnType<typeof listCodexModels>>["models"] = [];
       let modelsSource: "live" | "error" | undefined;
@@ -454,8 +455,8 @@ export async function exposeProviderCredentials(
           originator: CODEX_OAUTH.originator,
         },
         note: relay
-          ? "FAILURE_CODEX_BASE_URL relay is configured for Cloudflare Worker egress."
-          : "Direct chatgpt.com calls are blocked from Cloudflare Workers; apps should call from non-Worker hosts or a relay.",
+          ? "Codex relay is configured (KV failure-oauth:relay:codex or FAILURE_CODEX_BASE_URL)."
+          : "Direct chatgpt.com calls are blocked from Cloudflare Workers; run pnpm relay:providers.",
       };
     }
     case "antigravity": {
@@ -631,7 +632,7 @@ export async function exposeProviderCredentials(
             ? error.message
             : "Failed to load Kimi models for userinfo";
       }
-      const endpoints = kimiCredentialEndpoints(secret);
+      const endpoints = await kimiCredentialEndpoints(secret);
       return {
         type: secret.type,
         protocol: "kimi_code",

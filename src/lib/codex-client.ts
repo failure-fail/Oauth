@@ -4,6 +4,7 @@ import {
   chatgptIsFedRampFromToken,
   type StoredProviderSecret,
 } from "./providers";
+import { resolveCodexRelayBase } from "./relay-config";
 
 export type ThinkingLevel =
   | "none"
@@ -127,11 +128,6 @@ function extractReasoningMeta(row: Record<string, unknown>): {
   };
 }
 
-function envBase(): string | null {
-  const value = process.env.FAILURE_CODEX_BASE_URL?.trim();
-  return value ? value.replace(/\/$/, "") : null;
-}
-
 function openaiApiBase(): string {
   return (
     process.env.FAILURE_OPENAI_API_BASE_URL?.trim().replace(/\/$/, "") ||
@@ -171,10 +167,10 @@ export function formatCodexUpstreamError(
 ): string {
   const snippet = bodyText.slice(0, 240).replace(/\s+/g, " ").trim();
   if (/error code:\s*1016/i.test(bodyText)) {
-    return `${status} Codex relay origin is down (Cloudflare 1016). Restart \`pnpm relay:codex\` + cloudflared and update FAILURE_CODEX_BASE_URL.`;
+    return `${status} Codex relay origin is down (Cloudflare 1016). Restart \`pnpm relay:providers\` so KV gets a fresh tunnel URL.`;
   }
   if (/error code:\s*1033/i.test(bodyText)) {
-    return `${status} Codex relay tunnel offline (Cloudflare 1033). Restart cloudflared for FAILURE_CODEX_BASE_URL.`;
+    return `${status} Codex relay tunnel offline (Cloudflare 1033). Restart \`pnpm relay:providers\`.`;
   }
   if (
     /error code:\s*10\d{2}/i.test(bodyText) ||
@@ -182,7 +178,7 @@ export function formatCodexUpstreamError(
       bodyText,
     )
   ) {
-    return `${status} Cloudflare blocked/challenged Codex upstream${transport ? ` via ${transport}` : ""}. Check FAILURE_CODEX_BASE_URL relay.`;
+    return `${status} Cloudflare blocked/challenged Codex upstream${transport ? ` via ${transport}` : ""}. Check \`pnpm relay:providers\` / KV failure-oauth:relay:codex.`;
   }
   return `${status} ${snippet}`;
 }
@@ -413,9 +409,9 @@ type UpstreamAttempt = {
   baseUrl: string;
 };
 
-function upstreamCandidates(): UpstreamAttempt[] {
+async function upstreamCandidates(): Promise<UpstreamAttempt[]> {
   const candidates: UpstreamAttempt[] = [];
-  const relay = envBase();
+  const relay = await resolveCodexRelayBase();
   if (relay) {
     candidates.push({ transport: "relay", baseUrl: relay });
   }
@@ -436,7 +432,7 @@ async function fetchUpstream(
   baseUrl: string;
 }> {
   const errors: string[] = [];
-  for (const candidate of upstreamCandidates()) {
+  for (const candidate of await upstreamCandidates()) {
     const url = `${candidate.baseUrl}${path.startsWith("/") ? path : `/${path}`}`;
     try {
       const headers = new Headers(init.headers || {});
@@ -460,7 +456,7 @@ async function fetchUpstream(
     }
   }
   throw new Error(
-    `Codex upstream unreachable from this host (Cloudflare Workers cannot call chatgpt.com directly). ${errors.join(" | ")}. Set FAILURE_CODEX_BASE_URL to a Node relay (see scripts/codex-relay.mjs).`,
+    `Codex upstream unreachable from this host (Cloudflare Workers cannot call chatgpt.com directly). ${errors.join(" | ")}. Run pnpm relay:providers (publishes KV failure-oauth:relay:codex).`,
   );
 }
 
@@ -502,9 +498,10 @@ export async function listCodexModels(
     }
     return { models, transport, source: "live" };
   } catch (error) {
+    const relay = await resolveCodexRelayBase();
     return {
       models: [],
-      transport: envBase() ? "relay" : "openai_api",
+      transport: relay ? "relay" : "openai_api",
       source: "error",
       warning:
         error instanceof Error
@@ -1297,8 +1294,8 @@ function safeJson(text: string): unknown {
   }
 }
 
-export function exposeCodexEndpoints() {
-  const relay = envBase();
+export async function exposeCodexEndpoints() {
+  const relay = await resolveCodexRelayBase();
   const codexBase = relay || defaultCodexBase();
   return {
     base: codexBase,
@@ -1309,7 +1306,7 @@ export function exposeCodexEndpoints() {
     openaiApiFallback: openaiApiBase(),
     imageModel: CODEX_IMAGE_MODEL,
     note: relay
-      ? "Using FAILURE_CODEX_BASE_URL relay (required on Cloudflare Workers)."
-      : "Direct chatgpt.com calls fail on Cloudflare Workers; set FAILURE_CODEX_BASE_URL to scripts/codex-relay.mjs.",
+      ? "Using Codex relay (FAILURE_CODEX_BASE_URL or KV failure-oauth:relay:codex)."
+      : "Direct chatgpt.com calls fail on Cloudflare Workers; run pnpm relay:providers.",
   };
 }

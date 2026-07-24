@@ -451,7 +451,7 @@ Codex talks to the ChatGPT subscription Responses surface.
 | Image generate | `{base}/images/generations` |
 | Image edit | `{base}/images/edits` |
 
-`base` is either Failure’s configured relay (`FAILURE_CODEX_BASE_URL`) or `https://chatgpt.com/backend-api/codex`.
+`base` is either Failure’s configured relay (KV `failure-oauth:relay:codex`, or `FAILURE_CODEX_BASE_URL`) or `https://chatgpt.com/backend-api/codex`.
 
 > **Cloudflare Workers cannot call `chatgpt.com` directly** (CF challenge). Call from a normal Node/VM host, or use the relay URL from credentials.
 

@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import { KIMI_OAUTH } from "./config";
 import type { StoredProviderSecret } from "./providers";
 import type { ProviderModel } from "./codex-client";
+import { resolveKimiRelayBase } from "./relay-config";
 
 const FALLBACK_MODELS: ProviderModel[] = [
   { id: "kimi-for-coding", name: "Kimi K2.7 Code", kind: "chat" },
@@ -69,22 +70,23 @@ function formHeaders(deviceId?: string): Record<string, string> {
 }
 
 /** Non-Worker relay for api.kimi.com/coding (Worker egress is CF-challenged). */
-export function kimiRelayBase(): string | null {
-  const value = process.env.FAILURE_KIMI_BASE_URL?.trim();
-  return value ? value.replace(/\/$/, "") : null;
+export async function kimiRelayBase(): Promise<string | null> {
+  return resolveKimiRelayBase();
 }
 
-export function kimiApiBase(secret?: StoredProviderSecret): string {
+export async function kimiApiBase(
+  secret?: StoredProviderSecret,
+): Promise<string> {
   // Prefer relay on Workers — stored apiBase is usually api.kimi.com which is blocked.
-  const relay = kimiRelayBase();
+  const relay = await kimiRelayBase();
   if (relay) return relay;
   const fromRaw =
     typeof secret?.raw?.apiBase === "string" ? secret.raw.apiBase : null;
   return (fromRaw || KIMI_OAUTH.apiBase).replace(/\/$/, "");
 }
 
-export function kimiTransport(): "relay" | "direct" {
-  return kimiRelayBase() ? "relay" : "direct";
+export async function kimiTransport(): Promise<"relay" | "direct"> {
+  return (await kimiRelayBase()) ? "relay" : "direct";
 }
 
 export type KimiDeviceAuthorization = {
@@ -307,8 +309,8 @@ export async function listKimiModels(
 }> {
   const token = secret.accessToken;
   if (!token) throw new Error("Kimi access token missing");
-  const base = kimiApiBase(secret);
-  const transport = kimiTransport();
+  const base = await kimiApiBase(secret);
+  const transport = await kimiTransport();
   try {
     const res = await fetch(`${base}/models`, {
       headers: kimiHeaders(token, deviceIdOf(secret)),
@@ -330,7 +332,7 @@ export async function listKimiModels(
   } catch (error) {
     const hint =
       transport === "direct"
-        ? " Set FAILURE_KIMI_BASE_URL to scripts/kimi-relay.mjs (Worker egress to api.kimi.com is CF-blocked)."
+        ? " Run pnpm relay:providers (Worker egress to api.kimi.com is CF-blocked)."
         : "";
     return {
       models: FALLBACK_MODELS,
@@ -385,7 +387,7 @@ export async function chatKimi(
     models[0]?.id;
   if (!selected) throw new Error("No Kimi models available");
 
-  const base = kimiApiBase(secret);
+  const base = await kimiApiBase(secret);
   const res = await fetch(`${base}/chat/completions`, {
     method: "POST",
     headers: {
@@ -400,9 +402,10 @@ export async function chatKimi(
   });
   if (!res.ok) {
     const text = await res.text();
+    const transport = await kimiTransport();
     const hint =
-      kimiTransport() === "direct"
-        ? " Set FAILURE_KIMI_BASE_URL to a Node relay (see scripts/kimi-relay.mjs)."
+      transport === "direct"
+        ? " Run pnpm relay:providers (see scripts/start-provider-relays.mjs)."
         : "";
     throw new Error(
       `Kimi chat failed (${selected}): ${formatKimiUpstreamError(res.status, text)}${hint}`,
@@ -413,14 +416,14 @@ export async function chatKimi(
     model: selected,
     models,
     warning: listed.warning,
-    transport: kimiTransport(),
+    transport: await kimiTransport(),
     providerLabel: "Kimi Code",
   };
 }
 
-export function kimiCredentialEndpoints(secret: StoredProviderSecret) {
-  const base = kimiApiBase(secret);
-  const relay = kimiRelayBase();
+export async function kimiCredentialEndpoints(secret: StoredProviderSecret) {
+  const base = await kimiApiBase(secret);
+  const relay = await kimiRelayBase();
   return {
     base,
     models: `${base}/models`,
@@ -428,9 +431,9 @@ export function kimiCredentialEndpoints(secret: StoredProviderSecret) {
     token: KIMI_OAUTH.tokenUrl,
     deviceAuthorization: KIMI_OAUTH.deviceCodeUrl,
     upstream: KIMI_OAUTH.apiBase,
-    transport: kimiTransport(),
+    transport: relay ? ("relay" as const) : ("direct" as const),
     note: relay
-      ? "Using FAILURE_KIMI_BASE_URL relay (required on Cloudflare Workers)."
-      : "Direct api.kimi.com/coding calls are CF-challenged from Workers; set FAILURE_KIMI_BASE_URL to scripts/kimi-relay.mjs.",
+      ? "Using Kimi relay (FAILURE_KIMI_BASE_URL or KV failure-oauth:relay:kimi)."
+      : "Direct api.kimi.com/coding calls are CF-challenged from Workers; run pnpm relay:providers.",
   };
 }
