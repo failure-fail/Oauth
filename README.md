@@ -92,6 +92,8 @@ UserInfo (with `providers` scope) returns linked credential packages:
 pnpm relay:providers
 ```
 
+The supervisor pings the public tunnel every ~15s. On CF 1016/1033, timeouts, or bad `/healthz`, it kills cloudflared, starts a fresh quick tunnel, and re-publishes KV automatically.
+
 Optional local overrides: `FAILURE_CODEX_BASE_URL` / `FAILURE_KIMI_BASE_URL` (used only when KV has no relay URL).
 ## Security notes
 
