@@ -23,8 +23,18 @@
  *   LOCAL_PING_INTERVAL_MS     local relay check (default 5000)
  */
 import { spawn } from "node:child_process";
+import dns from "node:dns";
 import { createWriteStream, existsSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
+
+// Local resolvers often lag on brand-new trycloudflare hostnames; CF/Google DNS
+// usually see them sooner (and matches what the Worker edge uses).
+dns.setServers(
+  (process.env.RELAY_DNS_SERVERS || "1.1.1.1,1.0.0.1,8.8.8.8")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean),
+);
 
 const PORT = Number(process.env.PORT || 8787);
 const NS =
@@ -43,6 +53,9 @@ const LOCAL_PING_INTERVAL_MS = Number(
 const TUNNEL_URL_TIMEOUT_MS = Number(
   process.env.TUNNEL_URL_TIMEOUT_MS || 90_000,
 );
+const WORKER_HEALTH_URL =
+  process.env.WORKER_RELAY_HEALTH_URL ||
+  "https://oauth.failure.fail/api/relay/health";
 
 const state = {
   relay: null,
@@ -191,36 +204,115 @@ function isCloudflareEdgeDead(status, body) {
   return /error code:\s*(1016|1033|1000|1001|1020)/i.test(body || "");
 }
 
+function hostOf(url) {
+  try {
+    return new URL(url).host;
+  } catch {
+    return "";
+  }
+}
+
+async function pingDirectHealthz(url) {
+  const healthz = `${url.replace(/\/$/, "")}/healthz`;
+  const res = await fetch(healthz, {
+    signal: AbortSignal.timeout(10_000),
+    headers: { Accept: "application/json" },
+  });
+  const text = await res.text();
+  if (!res.ok || isCloudflareEdgeDead(res.status, text)) {
+    return {
+      ok: false,
+      reason: `direct_http_${res.status}:${text.slice(0, 80).replace(/\s+/g, " ")}`,
+      status: res.status,
+      via: "direct",
+    };
+  }
+  let json = null;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    return {
+      ok: false,
+      reason: "direct_non_json_healthz",
+      status: res.status,
+      via: "direct",
+    };
+  }
+  if (!json?.ok) {
+    return {
+      ok: false,
+      reason: "direct_healthz_not_ok",
+      status: res.status,
+      via: "direct",
+    };
+  }
+  return { ok: true, status: res.status, via: "direct" };
+}
+
 /**
- * Ping public tunnel healthz (and confirm JSON ok).
- * Returns { ok, reason, status? }.
+ * Prefer the live Worker probe (production path). Fall back to direct
+ * trycloudflare /healthz using Cloudflare DNS servers.
  */
 async function pingPublicTunnel(url) {
   if (!url) return { ok: false, reason: "no_url" };
-  const healthz = `${url.replace(/\/$/, "")}/healthz`;
+  const wantHost = hostOf(url);
+
+  // 1) Worker → KV → tunnel (what Codex actually uses)
   try {
-    const res = await fetch(healthz, {
-      signal: AbortSignal.timeout(10_000),
-      headers: { Accept: "application/json" },
+    const res = await fetch(WORKER_HEALTH_URL, {
+      signal: AbortSignal.timeout(15_000),
+      headers: { Accept: "application/json", "Cache-Control": "no-store" },
     });
     const text = await res.text();
-    if (!res.ok || isCloudflareEdgeDead(res.status, text)) {
-      return {
-        ok: false,
-        reason: `http_${res.status}:${text.slice(0, 80).replace(/\s+/g, " ")}`,
-        status: res.status,
-      };
-    }
     let json = null;
     try {
       json = JSON.parse(text);
     } catch {
-      return { ok: false, reason: "non_json_healthz", status: res.status };
+      // fall through to direct
     }
-    if (!json?.ok) {
-      return { ok: false, reason: "healthz_not_ok", status: res.status };
+    if (json && typeof json === "object") {
+      if (json.ok === true) {
+        const codexHost = hostOf(json.codex?.base || "");
+        const kimiHost = hostOf(json.kimi?.base || "");
+        if (
+          !wantHost ||
+          codexHost === wantHost ||
+          kimiHost === wantHost ||
+          !codexHost
+        ) {
+          return { ok: true, status: res.status, via: "worker" };
+        }
+        // Worker is healthy on a different tunnel hostname (stale local state)
+        return {
+          ok: true,
+          status: res.status,
+          via: "worker_other_host",
+          reason: `worker_ok_host=${codexHost || kimiHost}`,
+        };
+      }
+      const detail = [
+        json.codex?.error || json.codex?.body || json.codex?.status,
+        json.kimi?.error || json.kimi?.body || json.kimi?.status,
+      ]
+        .filter(Boolean)
+        .join("|");
+      // Worker sees failure — trust it as the source of truth for refresh
+      return {
+        ok: false,
+        reason: `worker_unhealthy:${detail || text.slice(0, 120)}`,
+        status: res.status,
+        via: "worker",
+      };
     }
-    return { ok: true, status: res.status };
+  } catch (error) {
+    // Worker probe failed (network) — try direct
+    const msg = error instanceof Error ? error.message : String(error);
+    log(`Worker health probe error, trying direct: ${msg}`);
+  }
+
+  // 2) Direct tunnel healthz
+  try {
+    return await pingDirectHealthz(url);
   } catch (error) {
     const cause =
       error && typeof error === "object" && "cause" in error
@@ -232,7 +324,7 @@ async function pingPublicTunnel(url) {
     ]
       .filter(Boolean)
       .join(": ");
-    return { ok: false, reason: detail || "fetch_failed" };
+    return { ok: false, reason: detail || "fetch_failed", via: "direct" };
   }
 }
 
@@ -307,7 +399,10 @@ async function refreshTunnel(reason) {
     state.tunnel = startTunnel();
 
     const url = await waitForTunnelUrl(state.tunnel);
-    // Edge DNS / routing can lag after quick-tunnel creation.
+    state.currentUrl = url;
+    // Publish first so the Worker probe can see the new hostname.
+    await publish(url);
+
     let ok = false;
     let last = null;
     const warmAttempts = Number(process.env.TUNNEL_WARM_ATTEMPTS || 30);
@@ -319,21 +414,19 @@ async function refreshTunnel(reason) {
         break;
       }
       log(
-        `Tunnel warm-up ping failed (${i + 1}/${warmAttempts}): ${last.reason}`,
+        `Tunnel warm-up ping failed (${i + 1}/${warmAttempts}) via=${last.via || "?"}: ${last.reason}`,
       );
     }
 
-    // Publish even if warm-up is flaky — ping loop will refresh again if needed.
-    state.currentUrl = url;
     state.lastFailReason = ok ? null : last?.reason || "warm_up_failed";
-    if (ok) state.lastOkAt = Date.now();
-    await publish(url);
-    if (!ok) {
-      log(
-        `Tunnel published but not yet healthy (${last?.reason}). Ping loop will refresh if it stays down.`,
-      );
+    if (ok) {
+      state.lastOkAt = Date.now();
+      state.consecutiveFails = 0;
+      log(`Tunnel ready: ${url} (via ${last?.via || "unknown"})`);
     } else {
-      log(`Tunnel ready: ${url}`);
+      log(
+        `Tunnel still unhealthy after warm-up (${last?.reason}). Ping loop will keep refreshing.`,
+      );
     }
   } finally {
     state.refreshing = false;
