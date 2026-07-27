@@ -8,7 +8,8 @@
  * healthz, kills cloudflared, starts a fresh quick tunnel, and re-publishes KV.
  *
  * Requires:
- *   - CLOUDFLARE_API_TOKEN (or wrangler auth)
+ *   - CLOUDFLARE_API_TOKEN (or wrangler auth), and/or a deployed
+ *     POST /api/relay/register endpoint
  *   - /tmp/cloudflared or `cloudflared` on PATH
  *   - FAILURE_KV namespace id (default matches wrangler.jsonc)
  *
@@ -21,10 +22,12 @@
  *   PING_INTERVAL_MS     public tunnel ping interval (default 15000)
  *   PING_FAILS_BEFORE_REFRESH  consecutive failures before refresh (default 2)
  *   LOCAL_PING_INTERVAL_MS     local relay check (default 5000)
+ *   REFRESH_COOLDOWN_MS  min gap between refreshes (default 20000)
+ *   PUBLISH_FAIL_COOLDOWN_MS  backoff when publish fails (default 60000)
  */
 import { spawn } from "node:child_process";
 import dns from "node:dns";
-import { createWriteStream, existsSync } from "node:fs";
+import { createWriteStream, existsSync, readFileSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 
 // Local resolvers often lag on brand-new trycloudflare hostnames; CF/Google DNS
@@ -35,6 +38,27 @@ dns.setServers(
     .map((s) => s.trim())
     .filter(Boolean),
 );
+
+// Soft-load token from a local file when the env var is missing (VM recycle).
+if (!process.env.CLOUDFLARE_API_TOKEN) {
+  for (const path of [
+    process.env.CLOUDFLARE_API_TOKEN_FILE,
+    "/tmp/cf-api-token",
+    `${process.env.HOME || ""}/.config/failure-oauth/cf-api-token`,
+  ].filter(Boolean)) {
+    try {
+      if (existsSync(path)) {
+        const token = readFileSync(path, "utf8").trim();
+        if (token) {
+          process.env.CLOUDFLARE_API_TOKEN = token;
+          break;
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+}
 
 const PORT = Number(process.env.PORT || 8787);
 const NS =
@@ -56,6 +80,12 @@ const TUNNEL_URL_TIMEOUT_MS = Number(
 const WORKER_HEALTH_URL =
   process.env.WORKER_RELAY_HEALTH_URL ||
   "https://oauth.failure.fail/api/relay/health";
+const WORKER_REGISTER_URL =
+  process.env.WORKER_RELAY_REGISTER_URL ||
+  "https://oauth.failure.fail/api/relay/register";
+const PUBLISH_FAIL_COOLDOWN_MS = Number(
+  process.env.PUBLISH_FAIL_COOLDOWN_MS || 60_000,
+);
 
 const state = {
   relay: null,
@@ -67,10 +97,18 @@ const state = {
   lastFailReason: null,
   publishedAt: null,
   lastRefreshAt: 0,
+  lastPublishFailAt: 0,
 };
 
 function log(...args) {
   console.log(new Date().toISOString(), ...args);
+}
+
+function randomUUID() {
+  return (
+    globalThis.crypto?.randomUUID?.() ||
+    `n${Date.now().toString(16)}${Math.random().toString(16).slice(2)}`
+  );
 }
 
 function run(cmd, args, opts = {}) {
@@ -130,6 +168,53 @@ async function kvPut(key, value) {
   log(`KV ${key} = ${value}`);
 }
 
+async function publishViaWorker(url) {
+  const base = url.replace(/\/$/, "");
+  const nonce =
+    randomUUID().replace(/-/g, "") + randomUUID().replace(/-/g, "");
+  const res = await fetch(WORKER_REGISTER_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({ root: base, nonce }),
+    signal: AbortSignal.timeout(20000),
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(`worker register ${res.status}: ${text.slice(0, 240)}`);
+  }
+  log(`Published via Worker register: ${base}`);
+}
+
+async function publish(url) {
+  const base = url.replace(/\/$/, "");
+  const errors = [];
+  try {
+    await publishViaWorker(base);
+    state.publishedAt = Date.now();
+    state.lastPublishFailAt = 0;
+    return;
+  } catch (error) {
+    errors.push(
+      `worker: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  try {
+    await kvPut("failure-oauth:relay:codex", `${base}/codex`);
+    await kvPut("failure-oauth:relay:kimi", `${base}/kimi`);
+    await kvPut("failure-oauth:relay:root", base);
+    state.publishedAt = Date.now();
+    state.lastPublishFailAt = 0;
+    log("Relay URLs published to KV via wrangler.");
+    return;
+  } catch (error) {
+    errors.push(
+      `wrangler: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  state.lastPublishFailAt = Date.now();
+  throw new Error(`Publish failed (${errors.join(" | ")})`);
+}
+
 async function waitForLocalHealth(timeoutMs = 15000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
@@ -186,15 +271,6 @@ function startTunnel() {
     log(`tunnel exited (code=${code} signal=${signal})`);
   });
   return child;
-}
-
-async function publish(url) {
-  const base = url.replace(/\/$/, "");
-  await kvPut("failure-oauth:relay:codex", `${base}/codex`);
-  await kvPut("failure-oauth:relay:kimi", `${base}/kimi`);
-  await kvPut("failure-oauth:relay:root", base);
-  state.publishedAt = Date.now();
-  log("Relay URLs published to KV. Worker picks them up on next request.");
 }
 
 function isCloudflareEdgeDead(status, body) {
@@ -296,7 +372,6 @@ async function pingPublicTunnel(url) {
       ]
         .filter(Boolean)
         .join("|");
-      // Worker sees failure — trust it as the source of truth for refresh
       return {
         ok: false,
         reason: `worker_unhealthy:${detail || text.slice(0, 120)}`,
@@ -305,7 +380,6 @@ async function pingPublicTunnel(url) {
       };
     }
   } catch (error) {
-    // Worker probe failed (network) — try direct
     const msg = error instanceof Error ? error.message : String(error);
     log(`Worker health probe error, trying direct: ${msg}`);
   }
@@ -355,7 +429,9 @@ async function waitForTunnelUrl(child, timeoutMs = TUNNEL_URL_TIMEOUT_MS) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       child.off("tunnel-url", onUrl);
-      reject(new Error(`Timed out waiting for trycloudflare URL (${timeoutMs}ms)`));
+      reject(
+        new Error(`Timed out waiting for trycloudflare URL (${timeoutMs}ms)`),
+      );
     }, timeoutMs);
     const onUrl = (url) => {
       clearTimeout(timer);
@@ -379,6 +455,21 @@ async function refreshTunnel(reason) {
   if (state.lastRefreshAt && since < minGap && reason !== "startup") {
     log(
       `Refresh cooldown (${Math.round((minGap - since) / 1000)}s left) — skip: ${reason}`,
+    );
+    return;
+  }
+  // Don't thrash tunnels when we can't publish (missing CF auth).
+  if (
+    state.lastPublishFailAt &&
+    Date.now() - state.lastPublishFailAt < PUBLISH_FAIL_COOLDOWN_MS &&
+    reason !== "startup"
+  ) {
+    const left = Math.round(
+      (PUBLISH_FAIL_COOLDOWN_MS - (Date.now() - state.lastPublishFailAt)) /
+        1000,
+    );
+    log(
+      `Publish-fail cooldown (${left}s left) — skip refresh: ${reason}. Set CLOUDFLARE_API_TOKEN or deploy /api/relay/register.`,
     );
     return;
   }
@@ -441,7 +532,6 @@ async function pingLoop() {
         continue;
       }
 
-      // Process died → refresh immediately
       if (!state.tunnel || state.tunnel.exitCode != null) {
         await refreshTunnel("tunnel process exited");
         await sleep(PING_INTERVAL_MS);
@@ -537,19 +627,80 @@ async function statusLoop() {
   }
 }
 
-async function main() {
-  // Never exit on a bad first tunnel — keep refreshing until one sticks.
-  for (;;) {
+async function adoptExistingStackIfHealthy() {
+  // If local relay + Worker KV already point at a live tunnel, keep them
+  // instead of killing a working cloudflared on supervisor restart.
+  try {
+    const local = await fetch(`http://127.0.0.1:${PORT}/healthz`, {
+      signal: AbortSignal.timeout(2000),
+    });
+    if (!local.ok) return false;
+  } catch {
+    return false;
+  }
+
+  try {
+    const res = await fetch(WORKER_HEALTH_URL, {
+      signal: AbortSignal.timeout(15_000),
+      headers: { Accept: "application/json", "Cache-Control": "no-store" },
+    });
+    const json = await res.json();
+    if (!json?.ok) return false;
+    const root = cleanRootFromBases(json.codex?.base, json.kimi?.base);
+    if (!root) return false;
+    // Confirm the tunnel host still answers us directly.
+    const direct = await pingDirectHealthz(root);
+    if (!direct.ok) return false;
+    state.relay = { exitCode: null, killed: false, kill() {} };
+    state.currentUrl = root;
+    state.lastOkAt = Date.now();
+    state.publishedAt = Date.now();
+    // Re-attach by starting a tracker tunnel only when none exists — we do
+    // not own the existing cloudflared PID, so if it dies the ping loop will
+    // refresh. Mark tunnel as a placeholder that "exits" when direct fails
+    // repeatedly via the normal ping path (process exit check skipped if null).
+    state.tunnel = {
+      exitCode: null,
+      killed: false,
+      kill() {},
+    };
+    log(`Adopting healthy stack at ${root} (via worker)`);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function cleanRootFromBases(...bases) {
+  for (const base of bases) {
+    if (typeof base !== "string" || !base) continue;
     try {
-      await ensureRelay();
-      await refreshTunnel("startup");
-      break;
-    } catch (error) {
-      log(
-        "Startup refresh failed, retrying in 5s:",
-        error instanceof Error ? error.message : String(error),
-      );
-      await sleep(5000);
+      const u = new URL(base);
+      return `${u.protocol}//${u.host}`;
+    } catch {
+      // continue
+    }
+  }
+  return null;
+}
+
+async function main() {
+  if (await adoptExistingStackIfHealthy()) {
+    // already good
+  } else {
+    // Never exit on a bad first tunnel — keep refreshing until one sticks.
+    for (;;) {
+      try {
+        await ensureRelay();
+        await refreshTunnel("startup");
+        break;
+      } catch (error) {
+        log(
+          "Startup refresh failed, retrying in 5s:",
+          error instanceof Error ? error.message : String(error),
+        );
+        await sleep(5000);
+      }
     }
   }
   log(
