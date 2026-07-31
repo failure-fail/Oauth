@@ -302,6 +302,30 @@ console.log(chat.choices[0].message.content);
 
 `reasoning_effort` (`none` | `low` | `medium` | `high` | `xhigh`) maps to provider thinking where supported.
 
+### Image attachments (`image_url`)
+
+User messages accept OpenAI multimodal content parts. `https://…` and `data:image/…;base64,…` URLs both work:
+
+```js
+const chat = await client.chat.completions.create({
+  model: "codex/gpt-5.6-sol",
+  messages: [
+    {
+      role: "user",
+      content: [
+        { type: "text", text: "What is in this image?" },
+        {
+          type: "image_url",
+          image_url: { url: "https://example.com/photo.png", detail: "auto" },
+        },
+      ],
+    },
+  ],
+});
+```
+
+Supported on **codex**, **claude**, **copilot**, **kimi**, and **mimo**. Not supported on antigravity/grok via `/v1` yet.
+
 ### curl
 
 ```bash

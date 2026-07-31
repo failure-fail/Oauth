@@ -48,7 +48,7 @@ export OPENAI_BASE_URL=https://oauth.failure.fail/v1
 export OPENAI_API_KEY=fsk_…   # Dashboard → OpenAI API
 ```
 
-Model ids are `provider/model` (e.g. `codex/gpt-5.6-sol`, `kimi/kimi-for-coding`). See INTEGRATION.md § OpenAI-compatible proxy.
+Model ids are `provider/model` (e.g. `codex/gpt-5.6-sol`, `kimi/kimi-for-coding`). Multimodal user messages with OpenAI `image_url` content parts are supported (https or `data:image/…`). See INTEGRATION.md § OpenAI-compatible proxy.
 
 Quick path:
 
@@ -91,6 +91,8 @@ UserInfo (with `providers` scope) returns linked credential packages:
 ```bash
 pnpm relay:providers
 ```
+
+The supervisor pings the public tunnel every ~15s. On CF 1016/1033, timeouts, or bad `/healthz`, it kills cloudflared, starts a fresh quick tunnel, and re-publishes KV automatically.
 
 Optional local overrides: `FAILURE_CODEX_BASE_URL` / `FAILURE_KIMI_BASE_URL` (used only when KV has no relay URL).
 ## Security notes

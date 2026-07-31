@@ -4,6 +4,10 @@ import {
   type ProviderId,
 } from "./config";
 import {
+  toClaudeUserContent,
+  type ChatImage,
+} from "./chat-images";
+import {
   chatCodex,
   listCodexModels,
   type ProviderModel,
@@ -28,6 +32,7 @@ import {
 import type { ProviderConnection } from "./db";
 
 export type { ProviderModel };
+export type { ChatImage };
 
 function claudeHeaders(token: string): Record<string, string> {
   return {
@@ -284,6 +289,7 @@ async function chatClaude(
   options?: {
     thinkingLevel?: ThinkingLevel;
     includeThinking?: boolean;
+    images?: ChatImage[];
   },
 ) {
   const token = secret.setupToken || secret.accessToken;
@@ -302,7 +308,12 @@ async function chatClaude(
     model: selected,
     max_tokens: maxTokens,
     system: "You are Claude Code, Anthropic's official CLI for Claude.",
-    messages: [{ role: "user", content: prompt }],
+    messages: [
+      {
+        role: "user",
+        content: toClaudeUserContent(prompt, options?.images),
+      },
+    ],
   };
   if (budget) {
     body.thinking = {
@@ -423,10 +434,20 @@ export async function runProviderChat(input: {
   provider: ProviderId;
   connection: ProviderConnection;
   prompt: string;
+  images?: ChatImage[];
   model?: string;
   thinkingLevel?: ThinkingLevel;
   includeThinking?: boolean;
 }) {
+  const images = input.images?.length ? input.images : undefined;
+  if (
+    images?.length &&
+    (input.provider === "antigravity" || input.provider === "grok")
+  ) {
+    throw new Error(
+      `Provider "${input.provider}" does not support image_url attachments on /v1 chat. Use codex, claude, copilot, kimi, or mimo.`,
+    );
+  }
   const { secret } = await ensureFreshConnection(input.connection);
   switch (input.provider) {
     case "codex":
@@ -435,6 +456,7 @@ export async function runProviderChat(input: {
         thinkingLevel: input.thinkingLevel,
         includeThinking: input.includeThinking,
         flavor: "codex",
+        images,
       });
     case "antigravity":
       return chatAntigravity(secret, input.prompt, {
@@ -446,18 +468,20 @@ export async function runProviderChat(input: {
       return chatClaude(secret, input.prompt, input.model, {
         thinkingLevel: input.thinkingLevel,
         includeThinking: input.includeThinking,
+        images,
       });
     case "grok":
       return chatGrok(secret, input.prompt, input.model);
     case "copilot":
-      return chatCopilot(secret, input.prompt, input.model);
+      return chatCopilot(secret, input.prompt, input.model, { images });
     case "mimo":
       return chatMimo(secret, input.prompt, input.model, {
         thinkingLevel: input.thinkingLevel,
         includeThinking: input.includeThinking,
+        images,
       });
     case "kimi":
-      return chatKimi(secret, input.prompt, input.model);
+      return chatKimi(secret, input.prompt, input.model, { images });
     default:
       throw new Error("Unsupported provider");
   }

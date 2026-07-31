@@ -94,6 +94,19 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (target.pathname === "/.failure-relay-challenge") {
+    const nonce = req.headers["x-failure-relay-nonce"];
+    const value = Array.isArray(nonce) ? nonce[0] : nonce;
+    if (!value || typeof value !== "string") {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: false, error: "missing_nonce" }));
+      return;
+    }
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: true, nonce: value }));
+    return;
+  }
+
   const service = pickService(target.pathname);
   if (!service) {
     res.writeHead(404, { "Content-Type": "application/json" });
